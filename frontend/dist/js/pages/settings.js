@@ -15,7 +15,7 @@
 // 添加/删除/保存时写入，服务端加载成功时以服务端为准重写，
 // 仅作为离线降级的后备副本。
 
-import { getOverview, getSettings, startScan, getJob, runPipeline } from '../api.js';
+import { getOverview, getSettings, startScan, getJob, listJobs, runPipeline } from '../api.js';
 
 const STORAGE_KEY = 'photo-picker.source_dirs';
 const POLL_INTERVAL_MS = 1000;
@@ -350,11 +350,32 @@ export function renderSettings(container) {
     }
   }
 
-  function startPolling(jobId) {
+  function startPolling(jobId, kind = 'scan') {
     state.jobId = jobId;
-    setJobState({ id: jobId, kind: 'scan', phase: 'running', progress: 0 });
+    setJobState({ id: jobId, kind, phase: 'running', progress: 0 });
     pollOnce(); // 立即拉一次，避免 1s 空窗
     state.pollTimer = setInterval(pollOnce, POLL_INTERVAL_MS);
+  }
+
+  // 切页再返回时恢复进行中的作业轮询（后台线程还在跑，丢的只是 UI）
+  async function resumeActiveJob() {
+    try {
+      const { jobs } = await listJobs();
+      if (!Array.isArray(jobs) || jobs.length === 0) return;
+      const active = jobs.find((j) => j.phase === 'running' || j.phase === 'pending');
+      if (active) {
+        startPolling(active.id, active.kind);
+        return;
+      }
+      // 最近 10 分钟内结束的作业展示终态（失败原因可见）
+      const last = jobs[jobs.length - 1];
+      const ts = Date.parse(last.finished_at || '');
+      if (Number.isFinite(ts) && ts > Date.now() - 10 * 60_000) {
+        setJobState(last);
+      }
+    } catch (err) {
+      /* 静默：恢复失败不阻塞设置页 */
+    }
   }
 
   scanBtn.addEventListener('click', async () => {
@@ -370,8 +391,7 @@ export function renderSettings(container) {
     try {
       const { job_id: jobId } = await startScan(state.dirs);
       saveDirs(state.dirs); // 保存时同步写 localStorage（后端已持久化设置）
-      startPolling(jobId);
-    } catch (err) {
+      startPolling(jobId);    } catch (err) {
       setJobState({
         id: '–',
         kind: 'scan',
@@ -446,6 +466,7 @@ export function renderSettings(container) {
   renderDirs();
   loadStats();
   loadServerSettings(); // 与统计加载并行：服务端优先，失败降级 localStorage
+  resumeActiveJob(); // 恢复后台仍在跑的作业进度（切页返回场景）
 
   // 离开页面前清掉轮询定时器
   return function cleanup() {
