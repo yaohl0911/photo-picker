@@ -462,6 +462,12 @@ def scan(
                     "UPDATE scan_runs SET progress = ? WHERE id = ?",
                     ((index + 1) / report.total_files, run_id),
                 )
+                # 分批提交：把长扫描切成短事务，避免全量扫描全程持有
+                # SQLite 写锁（否则并发写如 update_settings 会在
+                # busy_timeout 后抛 database is locked）。增量扫描按
+                # (path, mtime, size) 比对，部分提交的行下轮识别为
+                # unchanged，幂等安全。
+                conn.commit()
 
         if progress_cb:
             progress_cb("scan", report.total_files, report.total_files)

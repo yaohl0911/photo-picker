@@ -328,3 +328,34 @@ def test_camera_from():
     assert _camera_from(None, "EOS R5") == "EOS R5"
     assert _camera_from(None, None) is None
     assert _camera_from("Canon", "") == "Canon"
+
+
+# --- short transactions: concurrent writers must not starve ------------------
+
+
+def test_scan_commits_in_batches_to_keep_lock_windows_short(db, tmp_path):
+    """回归：扫描大目录必须分批提交（每 _PROGRESS_STEP 个文件）。
+
+    历史 bug：scan() 从头到尾单一大事务，全量扫描全程持有 SQLite
+    写锁，并发写（如 POST /api/scan 里的 update_settings）在
+    busy_timeout=5s 后抛 database is locked → HTTP 500。
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(150):  # 3 × _PROGRESS_STEP(50)
+        make_fake_file(src, f"p{i:03d}.jpg")
+
+    commits = []
+    db.set_trace_callback(
+        lambda sql: commits.append(sql)
+        if sql.strip().upper().startswith("COMMIT")
+        else None
+    )
+    try:
+        report = _scan(db, str(src))
+    finally:
+        db.set_trace_callback(None)
+
+    assert report.total_files == 150
+    # 150 / 50 = 3 次批提交（另有收尾与 helper 内 settings 写入的 commit）
+    assert len(commits) >= 3
