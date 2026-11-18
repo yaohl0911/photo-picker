@@ -48,12 +48,19 @@ def _score_haar(img) -> tuple[float | None, dict]:
     import cv2
     import numpy as np
 
+    # OpenCV 5.x 移除了主模块的 CascadeClassifier（opencv-python<5
+    # 才有）；缺失时返回 (None, …) 表示该维度未评估，评分端按
+    # 缺失维度处理（重归一化），不崩不误报。
+    cascade_cls = getattr(cv2, "CascadeClassifier", None)
+    if cascade_cls is None:
+        return None, {"faces": 0, "closed_eyes": 0, "engine": "haar-unavailable"}
+
     gray = np.asarray(img.convert("L"), dtype=np.uint8)
 
-    face_cascade = cv2.CascadeClassifier(
+    face_cascade = cascade_cls(
         str(cv2.data.haarcascades) + "haarcascade_frontalface_default.xml"
     )
-    eye_cascade = cv2.CascadeClassifier(
+    eye_cascade = cascade_cls(
         str(cv2.data.haarcascades) + "haarcascade_eye.xml"
     )
 

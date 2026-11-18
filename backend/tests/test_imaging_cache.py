@@ -68,9 +68,22 @@ def _insert_file(conn, tmp_path, mtime=1763000000.5, name="photo.jpg"):
 def test_import_module_is_safe_without_native_libs():
     # Hard requirement: importing app.imaging must not pull PIL/rawpy/pillow_heif
     # at module top level (their C extensions crash under DSH/AMFI).
-    sys.modules.pop("app.imaging", None)
-    mod = importlib.import_module("app.imaging")
-    assert mod.DecodeError is not None
+    #
+    # pop+reimport swaps the module object in sys.modules; app.main already
+    # bound the OLD module's functions at collection time, so a later
+    # monkeypatch(imaging, "CACHE_ROOT", ...) in another test file would patch
+    # the new object while routes still use the old one (cache-miss bug).
+    # Restore the original module identity afterwards.
+    import app as app_pkg
+
+    old = sys.modules.pop("app.imaging", None)
+    try:
+        mod = importlib.import_module("app.imaging")
+        assert mod.DecodeError is not None
+    finally:
+        if old is not None:
+            sys.modules["app.imaging"] = old
+            setattr(app_pkg, "imaging", old)
 
 
 def test_get_thumb_creates_cache_then_second_call_hits(

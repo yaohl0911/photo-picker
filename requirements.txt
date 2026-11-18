@@ -11,7 +11,7 @@ pydantic==2.14.3         # 请求体模型
 pillow==13.0.0           # 图像解码 / 缩略图 / 预览
 pillow_heif==1.8.1       # HEIC/HEIF 格式支持
 rawpy==0.28.0            # RAW 解码（CR3/ARW/NEF/RAF/DNG/ORF/RW2）
-opencv-python==5.0.0.93  # 质量分析（清晰度/构图/人脸检测）
+opencv-python==4.10.0.84  # 质量分析（清晰度/构图/人脸检测）；4.x：Haar CascadeClassifier 存在，5.x 已移除
 numpy==2.5.5             # 数值计算（质量分析底层）
 ImageHash==4.3.2         # 感知哈希（pHash 相似度判定）
 

@@ -24,9 +24,11 @@ def _hash_image(img):
     """
     import imagehash  # deferred: native extension
 
+    # average_hash 是 imagehash 4.x/5.x 全系稳定 API（ahash 短别名
+    # 只在部分构建里存在，新 venv 的 4.3.2 没有）
     return (
         str(imagehash.phash(img)),
-        str(imagehash.ahash(img)),
+        str(imagehash.average_hash(img)),
         str(imagehash.dhash(img)),
     )
 
