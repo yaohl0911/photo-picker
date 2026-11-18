@@ -134,6 +134,16 @@ class JobManager:
         )
         return job_id
 
+    def submit_pipeline(self, progress_cb=None) -> int:
+        """Run the full scan→pair→hash→group→analyze→recommend pipeline in a
+        thread, reusing api.run_full_pipeline_blocking. The finished job's
+        status dict carries the five-stage report under 'result', so the UI
+        can restore it after a page switch instead of relying on the (gone)
+        HTTP response."""
+        job_id = self._new_job("pipeline")
+        self._spawn(self._run_pipeline, job_id, progress_cb)
+        return job_id
+
     def status(self, job_id) -> dict | None:
         with self._lock:
             job = self._jobs.get(job_id)
@@ -164,6 +174,7 @@ class JobManager:
                 "progress": 0.0,
                 "error": None,
                 "note": None,
+                "result": None,
                 "started_at": _now(),
                 "finished_at": None,
             }
@@ -237,8 +248,9 @@ class JobManager:
             self._finalize(job_id, phase="failed", error="hashing module unavailable")
             return
 
-        def cb(current: int, total: int) -> None:
+        def cb(phase: str, current: int, total: int) -> None:
             self._set_progress(job_id, current, total)
+            self._call_user_cb(progress_cb, phase, current, total)
 
         with self._write_lock:
             conn = db.get_db(self._db_path)  # shared main-process connection
@@ -305,6 +317,25 @@ class JobManager:
                 )
             else:
                 self._finalize(job_id, phase="finished")
+
+    def _run_pipeline(self, job_id: int, progress_cb) -> None:
+        import app.db as db
+        from app import api
+
+        def cb(phase: str, current: int, total: int) -> None:
+            # note carries the current stage name for the UI
+            self._update(job_id, note=phase)
+            self._set_progress(job_id, current, total)
+            self._call_user_cb(progress_cb, phase, current, total)
+
+        with self._write_lock:
+            conn = db.get_db(self._db_path)
+            try:
+                report = api.run_full_pipeline_blocking(conn, progress_cb=cb)
+            finally:
+                conn.rollback()  # stages commit; clears residual txn state
+        self._update(job_id, result=report)
+        self._finalize(job_id, phase="finished")
 
     # -- helpers --------------------------------------------------------
 

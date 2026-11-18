@@ -214,10 +214,13 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         return status
 
     @app.post("/api/pipeline/run")
-    def pipeline_run(conn: sqlite3.Connection = Depends(get_conn)):
-        # sync (not async): FastAPI runs this handler in its threadpool,
-        # so the long import does not block the event loop.
-        return api.run_full_pipeline_blocking(conn)
+    def pipeline_run(request: Request):
+        # Background job (JobManager thread): the HTTP request returns
+        # {job_id} immediately; the UI polls /api/jobs/{id} and the finished
+        # job carries the five-stage report in status['result'], which
+        # survives page switches.
+        job_id = request.app.state.jobs.submit_pipeline()
+        return {"job_id": job_id}
 
     # --- images ---------------------------------------------------------------
 

@@ -112,6 +112,8 @@ export const listJobs = () => request('/api/jobs');
 export const getJob = (jobId) => request(`/api/jobs/${jobId}`);
 
 /** 同步执行完整流水线（扫描→哈希→分组→分析→推荐），返回各阶段报告。 */
+// 完整流水线已改为后台作业：立即返回 {job_id}，进度与最终五阶段报告
+// 都在 GET /api/jobs/{id} 的响应里（完成时 result 字段携带报告）。
 export const runPipeline = () =>
   request('/api/pipeline/run', { method: 'POST' });
 

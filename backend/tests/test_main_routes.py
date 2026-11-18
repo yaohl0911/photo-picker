@@ -118,3 +118,30 @@ def test_history_empty(client):
     resp = client.get("/api/history")
     assert resp.status_code == 200
     assert resp.json()["total"] == 0
+
+
+def test_pipeline_run_returns_job_id_immediately(client, tmp_path):
+    # pipeline runs in a background JobManager thread; the endpoint must
+    # return {job_id} fast (never block the HTTP request for minutes).
+    import json as _json
+
+    src = tmp_path / "lib"
+    src.mkdir()
+    (src / "IMG_1.JPG").write_bytes(b"fake-1")
+    from app.db import connect, init_db
+    from app.config import update_settings
+
+    db_path = tmp_path / "api_test.db"
+    conn = connect(db_path)
+    init_db(conn)
+    update_settings(conn, source_dirs=[str(src)])
+    conn.close()
+
+    resp = client.post("/api/pipeline/run")
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+    assert isinstance(job_id, int)
+
+    # job shows up in the list and reports its kind
+    lst = client.get("/api/jobs").json()["jobs"]
+    assert any(j["id"] == job_id and j["kind"] == "pipeline" for j in lst)

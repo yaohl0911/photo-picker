@@ -283,7 +283,7 @@ def test_build_groups_reports_progress(db):
     ins_file(db, "dir/b.jpg", H0, AH0, DH0, "2026-01-01T10:00:30")
     calls = []
 
-    grouper.build_groups(db, progress_cb=lambda **kw: calls.append(kw))
+    grouper.build_groups(db, progress_cb=lambda *a, **kw: calls.append(kw if kw else dict(phase=a[0], done=a[1], total=a[2])))
 
     assert calls
     assert all(c["phase"] == "group" for c in calls)

@@ -60,7 +60,7 @@ def compute_hashes(conn: sqlite3.Connection, progress_cb=None) -> dict:
     ``{"hashed": n, "skipped": n, "errors": [...]}``.
 
     progress_cb is called after every row as
-    ``progress_cb(phase="hash", done=done, total=total)`` where total is
+    ``progress_cb("hash", done, total)`` where total is
     the number of files rows examined.
     """
     rows = conn.execute(
@@ -87,5 +87,5 @@ def compute_hashes(conn: sqlite3.Connection, progress_cb=None) -> dict:
             except Exception as exc:
                 errors.append(f"{row['path']}: {exc}")
         if progress_cb is not None:
-            progress_cb(phase="hash", done=done, total=total)
+            progress_cb("hash", done, total)
     return {"hashed": hashed, "skipped": skipped, "errors": errors}

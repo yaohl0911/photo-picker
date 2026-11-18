@@ -231,3 +231,42 @@ class TestExecutePlaceholder:
 
         ids = [j["id"] for j in manager.list_jobs()]
         assert ids == [first, second]
+
+
+class TestPipeline:
+    def test_submit_pipeline_returns_job_with_report(self, manager, db, tmp_path):
+        source = tmp_path / "src"
+        source.mkdir()
+        make_fake_file(source, "a.jpg", b"a" * 16)
+        make_fake_file(source, "b.jpg", b"b" * 16)
+        update_settings(db, source_dirs=[str(source)])
+
+        job_id = manager.submit_pipeline()
+        st = _wait_job(manager, job_id)
+
+        assert st["phase"] == "finished", st
+        assert st["kind"] == "pipeline"
+        assert st["progress"] == 1.0
+        # the five-stage report rides on the job so page switches can't lose it
+        assert set(st["result"]) == {
+            "scan", "hashing", "grouping", "analysis", "recommend"
+        }
+        assert st["result"]["scan"]["total"] == 2
+        assert db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 2
+
+    def test_pipeline_failure_recorded_not_raised(self, manager, db, monkeypatch):
+        import app.api as api_mod
+        from app import jobs as jobs_mod
+
+        def boom(conn, progress_cb=None):
+            raise RuntimeError("pipeline exploded")
+
+        monkeypatch.setattr(api_mod, "run_full_pipeline_blocking", boom)
+        # _run_pipeline binds api.run_full_pipeline_blocking at call time
+        # through the module attribute, so patching the module works.
+        job_id = jobs_mod.JobManager.__dict__["_run_pipeline"]  # sanity: exists
+        job_id = manager.submit_pipeline()
+        st = _wait_job(manager, job_id)
+        assert st["phase"] == "failed", st
+        assert "pipeline exploded" in st["error"]
+        assert st["result"] is None

@@ -144,7 +144,7 @@ def test_progress_callback_reports_every_row(db, monkeypatch):
     ins_file(db, "dir/stray.jpg", with_photo=False)
     calls = []
 
-    res = hashing.compute_hashes(db, progress_cb=lambda **kw: calls.append(kw))
+    res = hashing.compute_hashes(db, progress_cb=lambda *a, **kw: calls.append(kw if kw else dict(phase=a[0], done=a[1], total=a[2])))
 
     assert res["hashed"] == 2 and res["skipped"] == 1
     assert [c["done"] for c in calls] == [1, 2, 3]

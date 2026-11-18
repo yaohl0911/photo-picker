@@ -188,7 +188,7 @@ def _collect_bk_pairs(files, threshold, progress_cb, pairs):
                     a, b = f["id"], other
                     pairs.add((a, b) if a < b else (b, a))
         if progress_cb is not None:
-            progress_cb(phase="group", done=done, total=total)
+            progress_cb("group", done, total)
 
 
 def build_groups(conn: sqlite3.Connection, progress_cb=None) -> dict:
@@ -197,7 +197,7 @@ def build_groups(conn: sqlite3.Connection, progress_cb=None) -> dict:
     Returns ``{"groups": n, "pairs": n}`` where ``groups`` counts the
     pending groups created in this run and ``pairs`` counts the validated
     similar file pairs that fed union-find. progress_cb, when given, is
-    called as ``progress_cb(phase="group", done=done, total=total)`` once
+    called as ``progress_cb("group", done, total)`` once
     per candidate file during the BK-tree scan.
 
     Idempotent: pending groups are dissolved and rebuilt from scratch;

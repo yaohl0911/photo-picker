@@ -25,6 +25,14 @@ const KIND_LABELS = {
   hashing: '感知哈希',
   analysis: '质量分析',
   execute: '文件移动',
+  pipeline: '完整流水线',
+};
+
+// pipeline 作业的 note 字段携带当前阶段名（scan/hash/group）
+const STAGE_LABELS = {
+  scan: '索引扫描',
+  hash: '感知哈希',
+  group: '相似分组',
 };
 
 const PHASE_LABELS = {
@@ -305,7 +313,10 @@ export function renderSettings(container) {
     jobPct.textContent = pct + '%';
     progressBar.setAttribute('aria-valuenow', String(pct));
 
-    jobPhase.textContent = PHASE_LABELS[job.phase] || job.phase || '未知状态';
+    jobPhase.textContent =
+      job.phase === 'running' && job.note
+        ? `${PHASE_LABELS[job.phase] || job.phase} · ${STAGE_LABELS[job.note] || job.note}`
+        : PHASE_LABELS[job.phase] || job.phase || '未知状态';
     jobFill.classList.toggle('is-done', job.phase === 'finished');
     jobFill.classList.toggle('is-failed', job.phase === 'failed');
 
@@ -332,9 +343,18 @@ export function renderSettings(container) {
       setJobState(job);
       if (job.phase === 'finished') {
         stopPolling();
-        await loadStats(); // 扫描完成后刷新统计
+        await loadStats(); // 作业完成后刷新统计
+        if (job.kind === 'pipeline' && job.result) {
+          renderPipelineReport(job.result);
+          finishPipelineUi();
+        }
       } else if (job.phase === 'failed') {
         stopPolling();
+        if (job.kind === 'pipeline') {
+          pipelineError.textContent = '流水线执行失败：' + (job.error || '未知错误');
+          pipelineError.hidden = false;
+          finishPipelineUi();
+        }
       }
     } catch (err) {
       stopPolling();
@@ -372,6 +392,13 @@ export function renderSettings(container) {
       const ts = Date.parse(last.finished_at || '');
       if (Number.isFinite(ts) && ts > Date.now() - 10 * 60_000) {
         setJobState(last);
+        // 流水线完成后切页返回：报告仍在 job.result 里，原样重渲染
+        if (last.kind === 'pipeline' && last.phase === 'finished' && last.result) {
+          renderPipelineReport(last.result);
+        } else if (last.kind === 'pipeline' && last.phase === 'failed') {
+          pipelineError.textContent = '流水线执行失败：' + (last.error || '未知错误');
+          pipelineError.hidden = false;
+        }
       }
     } catch (err) {
       /* 静默：恢复失败不阻塞设置页 */
@@ -440,24 +467,28 @@ export function renderSettings(container) {
     pipelineReport.hidden = false;
   }
 
+  function finishPipelineUi() {
+    pipelineBtn.disabled = false;
+    pipelineBtn.classList.remove('is-loading');
+    pipelineBtn.textContent = '运行完整流水线';
+  }
+
   pipelineBtn.addEventListener('click', async () => {
     if (pipelineBtn.disabled) return;
+    if (state.pollTimer !== null) return; // 已有作业在跑（扫描或流水线共用一条轮询）
     pipelineBtn.disabled = true;
     pipelineBtn.classList.add('is-loading');
     pipelineBtn.textContent = '流水线运行中…';
     pipelineError.hidden = true;
     pipelineReport.hidden = true;
     try {
-      const report = await runPipeline();
-      renderPipelineReport(report);
-      await loadStats(); // 分析完成后刷新统计
+      const { job_id: jobId } = await runPipeline();
+      // 后台作业：进度和最终报告都挂在 job 上，切页回来仍可恢复
+      startPolling(jobId, 'pipeline');
     } catch (err) {
-      pipelineError.textContent = '流水线执行失败：' + err.message;
+      pipelineError.textContent = '提交流水线失败：' + err.message;
       pipelineError.hidden = false;
-    } finally {
-      pipelineBtn.disabled = false;
-      pipelineBtn.classList.remove('is-loading');
-      pipelineBtn.textContent = '运行完整流水线';
+      finishPipelineUi();
     }
   });
 

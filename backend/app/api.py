@@ -497,6 +497,8 @@ def get_settings(conn):
 
 # --- pipeline ----------------------------------------------------------------
 
+_ANALYSIS_COMMIT_STEP = 50  # commit cadence to keep write-lock windows short
+
 def run_full_pipeline_blocking(conn, progress_cb=None):
     """Synchronous scan→pair→hash→group→analyze→recommend pipeline.
 
@@ -549,6 +551,8 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
              json.dumps(scores["details"])),
         )
         analyzed += 1
+        if analyzed % _ANALYSIS_COMMIT_STEP == 0:
+            conn.commit()  # short write locks like scanner's batches
     conn.commit()
     report["analysis"] = {"analyzed": analyzed, "failed": failed,
                           "errors": errors}
