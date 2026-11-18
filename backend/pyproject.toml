@@ -1,0 +1,8 @@
+[project]
+name = "photo-picker-backend"
+version = "0.1.0"
+description = "Photo dedup and preference learning backend"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
