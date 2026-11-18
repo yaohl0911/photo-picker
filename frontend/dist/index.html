@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="照片去重与偏好学习工具（本地运行）">
+  <title>照片去重助手</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%231f5fd0'/%3E%3Ccircle cx='16' cy='16' r='5.5' fill='%23ffffff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="#/overview" aria-label="返回总览">
+        <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="2.6"/>
+          <circle cx="16" cy="16" r="5.5" fill="currentColor"/>
+        </svg>
+        <span class="brand__name">照片去重助手</span>
+      </a>
+      <nav class="nav" id="main-nav" aria-label="主导航">
+        <a href="#/overview" data-route="overview">总览</a>
+        <a href="#/compare" data-route="compare">对比决策</a>
+        <a href="#/preferences" data-route="preferences">偏好</a>
+        <a href="#/history" data-route="history">历史</a>
+        <a href="#/settings" data-route="settings">设置</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="app" class="container" data-page="overview"></main>
+
+  <footer class="footer">photo-picker · 本地运行 · 照片数据不出本机</footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
