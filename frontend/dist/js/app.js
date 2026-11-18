@@ -34,6 +34,16 @@ function routeFromHash() {
   return Object.prototype.hasOwnProperty.call(ROUTES, name) ? name : DEFAULT_ROUTE;
 }
 
+/** 提取 hash 中的 query 参数（如 `#/compare?group=5` → `group=5`）。 */
+function queryFromHash() {
+  const raw = (location.hash || '').replace(/^#\/?/, '');
+  const qIdx = raw.indexOf('?');
+  const query = qIdx === -1 ? '' : raw.slice(qIdx + 1);
+  // 过滤非法 query（不能以 / 开头等）
+  if (!query || query.includes('/') || query.includes('#')) return '';
+  return query;
+}
+
 /** 导航高亮：is-active class + aria-current="page"。 */
 function setActiveNav(name) {
   navEl.querySelectorAll('a[data-route]').forEach((link) => {
@@ -46,7 +56,8 @@ function setActiveNav(name) {
 
 function render() {
   const name = routeFromHash();
-  const canonical = '#/' + name;
+  const query = queryFromHash();
+  const canonical = '#/' + name + (query ? '?' + query : '');
 
   // 未知 hash 归一化（不产生多余历史记录；hashchange 会再次触发 render）
   if ((location.hash || '') !== canonical) {
