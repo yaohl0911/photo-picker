@@ -95,6 +95,25 @@ def test_root_placeholder(client):
     assert resp.status_code == 200
 
 
+def test_get_settings_defaults(client):
+    resp = client.get("/api/settings")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_dirs"] == []
+    assert data["phash_threshold"] == 10
+    assert data["time_window_sec"] == 60
+    assert isinstance(data["rejected_root"], str) and data["rejected_root"]
+
+
+def test_get_settings_after_scan(client, tmp_path):
+    src = str(tmp_path / "photos")
+    resp = client.post("/api/scan", json={"source_dirs": [src]})
+    assert resp.status_code == 200
+    resp = client.get("/api/settings")
+    data = resp.json()
+    assert data["source_dirs"] == [src]
+
+
 def test_history_empty(client):
     resp = client.get("/api/history")
     assert resp.status_code == 200

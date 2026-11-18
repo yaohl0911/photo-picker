@@ -186,6 +186,12 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     ):
         return api.list_history(conn, offset=offset, limit=limit)
 
+    # --- settings ---------------------------------------------------------------
+
+    @app.get("/api/settings")
+    def settings(conn: sqlite3.Connection = Depends(get_conn)):
+        return api.get_settings(conn)
+
     # --- jobs / scan / pipeline -----------------------------------------------
 
     @app.post("/api/scan")

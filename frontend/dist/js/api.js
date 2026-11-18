@@ -94,6 +94,11 @@ export const updateLockedDims = (dims) =>
 export const listHistory = ({ offset = 0, limit = 50 } = {}) =>
   request(`/api/history?offset=${offset}&limit=${limit}`);
 
+// --- 设置 ---------------------------------------------------------------------
+
+/** 当前服务端设置（源目录 / 淘汰目录 / 相似判定阈值），设置页服务端优先加载用。 */
+export const getSettings = () => request('/api/settings');
+
 // --- 扫描 / 作业 / 流水线 -----------------------------------------------------
 
 /** 提交源目录并启动扫描作业，返回 {job_id}。 */

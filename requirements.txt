@@ -1,0 +1,20 @@
+# photo-picker 运行依赖（版本锁定为当前 .venv 已验证的版本）。
+# 安装：uv pip install -r requirements.txt
+#   （等价：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt）
+
+# Web 服务
+fastapi==0.163.1        # JSON API 路由层（backend/app/main.py）
+uvicorn==0.54.0          # ASGI 服务器（127.0.0.1:8765）
+pydantic==2.14.3         # 请求体模型
+
+# 图像处理
+pillow==13.0.0           # 图像解码 / 缩略图 / 预览
+pillow_heif==1.8.1       # HEIC/HEIF 格式支持
+rawpy==0.28.0            # RAW 解码（CR3/ARW/NEF/RAF/DNG/ORF/RW2）
+opencv-python==5.0.0.93  # 质量分析（清晰度/构图/人脸检测）
+numpy==2.5.5             # 数值计算（质量分析底层）
+ImageHash==4.3.2         # 感知哈希（pHash 相似度判定）
+
+# 测试（DSH/用户终端双轨验证，见 docs/DEVENV.md）
+pytest==9.2.0
+httpx==0.28.1            # fastapi TestClient 的 HTTP 层

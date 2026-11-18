@@ -19,9 +19,10 @@ Weight semantics
   reflect the current effective weights.
 """
 import json
+import os
 
 from app import executor, grouper, hashing, learner, recommender, scanner
-from app.config import get_settings
+from app.config import get_settings as get_config_settings
 from app.recommender import DIMENSIONS, DIMENSION_LABELS, DEFAULT_WEIGHTS
 
 __all__ = [
@@ -33,6 +34,7 @@ __all__ = [
     "undo_group_api",
     "add_feedback",
     "get_preferences",
+    "get_settings",
     "set_preference_weights",
     "effective_weights",
     "train_now",
@@ -469,6 +471,30 @@ def list_history(conn, offset=0, limit=50):
             "limit": limit}
 
 
+# --- settings -----------------------------------------------------------------
+
+def get_settings(conn):
+    """Current persisted settings for the settings page (server-first load).
+
+    Reads ``app.config.get_settings`` and resolves every path to absolute
+    form: ``source_dirs`` entries are abspath'd (empty list stays []),
+    and ``rejected_root`` returns the *effective* directory via
+    ``executor.default_rejected_root`` (explicit setting, else
+    ``<first source dir>/../_photo_picker_rejected``, else the
+    ``data/`` fallback) so the UI shows where rejected files will
+    actually land. Key names/types follow app.config:
+    ``phash_threshold``/``time_window_sec`` are ints.
+    """
+    settings = get_config_settings(conn)
+    return {
+        "source_dirs": [os.path.abspath(d)
+                        for d in (settings["source_dirs"] or [])],
+        "rejected_root": executor.default_rejected_root(conn),
+        "phash_threshold": settings["phash_threshold"],
+        "time_window_sec": settings["time_window_sec"],
+    }
+
+
 # --- pipeline ----------------------------------------------------------------
 
 def run_full_pipeline_blocking(conn, progress_cb=None):
@@ -493,7 +519,7 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
     group_report = grouper.build_groups(conn, progress_cb=progress_cb)
     report["grouping"] = dict(group_report)
 
-    face_engine = get_settings(conn).get("face_engine", "auto")
+    face_engine = get_config_settings(conn).get("face_engine", "auto")
     pending = conn.execute(
         "SELECT p.id AS photo_id, f.path FROM photos p"
         " JOIN files f ON f.id = p.primary_file_id"

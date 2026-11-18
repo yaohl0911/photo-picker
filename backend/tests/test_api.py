@@ -6,6 +6,7 @@ The HTTP layer (app.main) has its own smoke tests in test_main_routes.py
 which skip entirely when fastapi cannot be imported.
 """
 import json
+import os
 
 import pytest
 
@@ -521,6 +522,45 @@ def test_list_history_validation(db):
         api.list_history(db, limit=0)
     with pytest.raises(ValueError):
         api.list_history(db, offset=-5)
+
+
+# ---------------------------------------------------------------------------
+# get_settings
+# ---------------------------------------------------------------------------
+
+def test_get_settings_defaults(db):
+    data = api.get_settings(db)
+    assert data["source_dirs"] == []
+    assert data["rejected_root"] == os.path.abspath(
+        os.path.join("data", "_photo_picker_rejected"))
+    assert data["phash_threshold"] == 10
+    assert data["time_window_sec"] == 60
+
+
+def test_get_settings_after_update(db, tmp_path):
+    from app.config import update_settings
+    conn = db
+    update_settings(conn, source_dirs=[str(tmp_path / "lib")],
+                    rejected_root=str(tmp_path / "rej"))
+    data = api.get_settings(conn)
+    assert data["source_dirs"] == [os.path.abspath(tmp_path / "lib")]
+    assert data["rejected_root"] == os.path.abspath(tmp_path / "rej")
+
+
+def test_get_settings_types_and_derived_rejected_root(db, tmp_path):
+    from app.config import update_settings
+    conn = db
+    update_settings(conn, source_dirs=[str(tmp_path / "photos"), str(tmp_path / "raw")])
+    data = api.get_settings(conn)
+    assert isinstance(data["source_dirs"], list)
+    assert all(isinstance(d, str) for d in data["source_dirs"])
+    assert isinstance(data["rejected_root"], str)
+    # rejected_root 为空时按首个源目录推导：<dir>/../_photo_picker_rejected
+    assert data["rejected_root"] == os.path.abspath(
+        os.path.join(str(tmp_path / "photos"), os.pardir,
+                     "_photo_picker_rejected"))
+    assert isinstance(data["phash_threshold"], int)
+    assert isinstance(data["time_window_sec"], int)
 
 
 # ---------------------------------------------------------------------------

@@ -1,19 +1,21 @@
-// 设置页（Task 10 核心实现）：
+// 设置页（Task 10 核心实现，Task 13a 增加服务端加载）：
 //   1. 图库统计卡片 —— 进入页面即 GET /api/overview 渲染；
-//   2. 源目录管理 —— 本地列表（localStorage 持久化，初始为空），
+//   2. 源目录管理 —— 服务端优先：进页并行 GET /api/settings，
+//      source_dirs 非空则覆盖本地列表并重写 localStorage；
+//      请求失败时降级为 localStorage 本地副本并提示「离线模式」；
 //      输入校验（非空、去重），回车/按钮添加，列表可删除；
-//   3. 扫描作业 —— 「保存并扫描」POST /api/scan 提交整个列表，
+//   3. 扫描作业 —— 「保存并扫描」POST /api/scan 提交整个列表
+//      （后端 update_settings 已持久化，成功后无需额外处理），
 //      拿到 job_id 后每 1s 轮询 GET /api/jobs/{id} 更新进度条，
 //      finished/failed 停止轮询，完成后刷新统计卡片；
 //   4. 完整流水线 —— POST /api/pipeline/run（同步、可能耗时），
 //      按钮加载态 + 完成后展示各阶段报告摘要。
 //
-// 注：后端目前没有 GET settings 端点，源目录无法从服务端读回，
-// 因此列表维护在浏览器 localStorage；每次「保存并扫描」把整表
-// 随 POST /api/scan 的 source_dirs 一次性提交（后端会存入 settings）。
-// 后端补上 GET /settings 后（Task 13 候选），可改为服务端为准。
+// localStorage（photo-picker.source_dirs）始终与列表同步：
+// 添加/删除/保存时写入，服务端加载成功时以服务端为准重写，
+// 仅作为离线降级的后备副本。
 
-import { getOverview, startScan, getJob, runPipeline } from '../api.js';
+import { getOverview, getSettings, startScan, getJob, runPipeline } from '../api.js';
 
 const STORAGE_KEY = 'photo-picker.source_dirs';
 const POLL_INTERVAL_MS = 1000;
@@ -116,10 +118,11 @@ export function renderSettings(container) {
         <button class="btn dir-form__add" id="dir-add-btn" type="submit">添加</button>
       </form>
       <p class="field-error" id="dir-error" data-testid="dir-error" hidden></p>
+      <p class="alert alert--error" id="offline-notice" data-testid="offline-notice" hidden></p>
       <ul class="dir-list" id="dir-list" data-testid="dir-list"></ul>
       <div class="card__foot">
         <button class="btn btn--primary" id="scan-btn" type="button">保存并扫描</button>
-        <span class="hint">目录列表保存在本浏览器（localStorage）；点击「保存并扫描」时整表提交给后端。</span>
+        <span class="hint">目录列表从服务端加载（localStorage 作为离线备份）；点击「保存并扫描」时整表提交给后端持久化。</span>
       </div>
     </section>
 
@@ -171,6 +174,7 @@ export function renderSettings(container) {
   const pipelineBtn = $('#pipeline-btn');
   const pipelineReport = $('#pipeline-report');
   const pipelineError = $('#pipeline-error');
+  const offlineNotice = $('#offline-notice');
 
   // --- 统计 -------------------------------------------------------------------
 
@@ -204,6 +208,30 @@ export function renderSettings(container) {
   function showDirError(message) {
     dirError.hidden = !message;
     if (message) dirError.textContent = message;
+  }
+
+  function showOfflineNotice(message) {
+    offlineNotice.hidden = !message;
+    if (message) offlineNotice.textContent = message;
+  }
+
+  // 服务端优先加载源目录：GET /api/settings 成功且 source_dirs 非空 →
+  // 覆盖本地列表并以服务端为准重写 localStorage；请求失败 →
+  // 降级显示 localStorage 本地副本，并提示离线模式。
+  async function loadServerSettings() {
+    try {
+      const settings = await getSettings();
+      const serverDirs = (Array.isArray(settings.source_dirs) ? settings.source_dirs : [])
+        .filter((d) => typeof d === 'string' && d);
+      showOfflineNotice(null);
+      if (serverDirs.length > 0) {
+        state.dirs = serverDirs;
+        saveDirs(serverDirs); // 服务端为准，重写本地副本
+        renderDirs();
+      }
+    } catch (err) {
+      showOfflineNotice('离线模式，显示本地保存的目录');
+    }
   }
 
   function renderDirs() {
@@ -341,6 +369,7 @@ export function renderSettings(container) {
     scanBtn.textContent = '提交扫描…';
     try {
       const { job_id: jobId } = await startScan(state.dirs);
+      saveDirs(state.dirs); // 保存时同步写 localStorage（后端已持久化设置）
       startPolling(jobId);
     } catch (err) {
       setJobState({
@@ -416,6 +445,7 @@ export function renderSettings(container) {
 
   renderDirs();
   loadStats();
+  loadServerSettings(); // 与统计加载并行：服务端优先，失败降级 localStorage
 
   // 离开页面前清掉轮询定时器
   return function cleanup() {
