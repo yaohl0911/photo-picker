@@ -412,6 +412,52 @@ def test_repair_keeps_normal_pairs_untouched(db, tmp_path):
     assert len(_photos(db)) == 2
 
 
+def test_repair_splits_false_pair_when_hashes_disagree(db, tmp_path):
+    # Huawei batch export: a raw and an unrelated same-second jpg got paired
+    # by capture-time proximity; their phashes say they are different photos,
+    # so the pair must be split even though the photo only carries 2 files.
+    from app.scanner import repair_overmerged_photos
+
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "shot.dng", b"raw")
+    make_fake_file(src, "unrelated.jpg", b"jpg")
+    _scan(db, src)
+    raw_id = _files(db)[str(src / "shot.dng")]["id"]
+    jpg_id = _files(db)[str(src / "unrelated.jpg")]["id"]
+    # weld them onto one photo, then give them far-apart hashes
+    photo_id = _files(db)[str(src / "shot.dng")]["photo_id"]
+    db.execute("UPDATE files SET photo_id = ? WHERE id = ?", (photo_id, jpg_id))
+    db.execute(
+        "DELETE FROM photos WHERE id NOT IN"
+        " (SELECT DISTINCT photo_id FROM files WHERE photo_id IS NOT NULL)"
+    )
+    db.execute("UPDATE files SET hash_phash = ? WHERE id = ?", ("0" * 16, raw_id))
+    db.execute("UPDATE files SET hash_phash = ? WHERE id = ?", ("f" * 16, jpg_id))
+    db.commit()
+
+    assert repair_overmerged_photos(db) == 1
+    assert _files(db)[str(src / "shot.dng")]["photo_id"] == photo_id
+    assert _files(db)[str(src / "unrelated.jpg")]["photo_id"] != photo_id
+
+
+def test_pair_skips_same_second_jpg_when_hashes_disagree(db, tmp_path):
+    # pre-hashed files: the pipeline re-pairs on rescans and must refuse
+    # the same-second coincidence the hashes contradict
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "shot.dng", b"raw")
+    make_fake_file(src, "unrelated.jpg", b"jpg")
+    _scan(db, src)
+    for path, h in ((f"{src}/shot.dng", "0" * 16), (f"{src}/unrelated.jpg", "f" * 16)):
+        db.execute("UPDATE files SET captured_at = ?, hash_phash = ? WHERE path = ?",
+                   ("2026-06-11T22:46:08", h, path))
+    db.commit()
+
+    assert pair_raw_jpg(db) == 0
+    assert len(_photos(db)) == 2
+
+
 def test_parse_exif_datetime():
     assert _parse_exif_datetime("2020:01:02 03:04:05") == "2020-01-02T03:04:05"
     assert _parse_exif_datetime("2020:01:02 03:04:05.123") == "2020-01-02T03:04:05"

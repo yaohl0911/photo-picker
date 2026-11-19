@@ -513,13 +513,17 @@ def _already_paired(raw_row, jpg_row) -> bool:
     return photo_id is not None and photo_id == jpg_row["photo_id"]
 
 
-def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], photo_raw_count=None):
+def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], photo_raw_count=None,
+                      conn=None):
     """Pick the jpg to pair with a raw file: same stem first, then nearest Δt.
 
     Jpgs whose photo already carries a raw are excluded — they are spoken
     for, no matter which run asks. ``photo_raw_count`` maps photo_id to the
     number of raw files it carries (precomputed; a per-candidate COUNT(*)
-    would rescan the whole files table once per candidate).
+    would rescan the whole files table once per candidate). Candidates
+    whose phash disagrees with the raw (when both hashes exist) are also
+    rejected: a time-proximity pairing is only a heuristic, the hashes are
+    ground truth for "same photo".
     """
     candidates = [
         jpg
@@ -538,6 +542,10 @@ def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], photo_raw_count=None
     for jpg in candidates:
         gap = _capture_gap_seconds(raw_row, jpg)
         if gap is not None and gap < _PAIR_MAX_CAPTURE_GAP_SEC:
+            if conn is not None:
+                phash_gap = _phash_gap(conn, raw_row["id"], jpg["id"])
+                if phash_gap is not None and phash_gap > 10:
+                    continue  # different photos: same-second is coincidence
             timed.append((gap, jpg["id"], jpg))
     if not timed:
         return None
@@ -589,6 +597,22 @@ def _merge_into_raw_photo(conn: sqlite3.Connection, raw_row, jpg_row) -> None:
     )
 
 
+def _phash_gap(conn, file_id_a, file_id_b):
+    """Hamming distance between two files' phashes; None when either hash
+    is missing (pairing runs before hashing on first scans — absence is
+    "cannot tell", not "different photos")."""
+    from app.hashing import phash_distance
+
+    rows = conn.execute(
+        "SELECT id, hash_phash FROM files WHERE id IN (?, ?)", (file_id_a, file_id_b)
+    ).fetchall()
+    hashes = {r["id"]: r["hash_phash"] for r in rows}
+    a, b = hashes.get(file_id_a), hashes.get(file_id_b)
+    if not a or not b:
+        return None
+    return phash_distance(a, b)
+
+
 def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
     """Split photos that accumulated more than one raw-jpg pair.
 
@@ -596,17 +620,21 @@ def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
     already sharing the raw's photo, while the per-call claim set reset on
     every pipeline run — so each re-run wed one more same-second jpg onto
     the same raw photo ( Huawei batch exports share one mtime second ).
-    A photo now keeps at most one raw + its nearest-in-time jpg; every
-    extra file becomes a standalone photo again. Hashes survive on the
-    files rows; the split photos re-enter analysis (no quality_scores)
-    and regrouping on the next pipeline run.
+    Worse, Huawei batch exports also fake the capture-time pairing itself:
+    an unrelated same-second jpg gets paired with a raw. A photo now keeps
+    at most one raw + one jpg, and only when their phash distance is
+    within the similarity threshold (they must be the same photo); every
+    extra or hash-disagreeing file becomes a standalone photo again.
+    Hashes survive on the files rows; the split photos re-enter analysis
+    (no quality_scores) and regrouping on the next pipeline run.
     Returns the number of photos split.
     """
+    _PAIR_HASH_MAX_DISTANCE = 10  # same threshold as grouper similarity
     over = list(
         conn.execute(
             "SELECT photo_id, COUNT(*) AS n FROM files"
             " WHERE photo_id IS NOT NULL"
-            " GROUP BY photo_id HAVING n > 2"
+            " GROUP BY photo_id HAVING n > 1"
         )
     )
     if not over:
@@ -625,7 +653,9 @@ def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
         keep_ids = {f["id"] for f in files if f["format"] != "raw" and f["format"] != "jpg"}
         if raws:
             keep_ids.add(raws[0]["id"])
-            # keep the jpg closest in capture time to the raw (true pair)
+            # keep the jpg closest in capture time to the raw — but only if
+            # the hashes agree they are the same photo: Huawei batch exports
+            # share one mtime second, so nearest-in-time is meaningless there
             jpgs = [f for f in files if f["format"] == "jpg"]
             if jpgs:
                 def gap(jpg):
@@ -640,7 +670,10 @@ def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
                         except ValueError:
                             return float("inf")
                     return float("inf")
-                keep_ids.add(min(jpgs, key=lambda j: (gap(j), j["id"]))["id"])
+                best = min(jpgs, key=lambda j: (gap(j), j["id"]))
+                phash_gap = _phash_gap(conn, raws[0]["id"], best["id"])
+                if phash_gap is None or phash_gap <= _PAIR_HASH_MAX_DISTANCE:
+                    keep_ids.add(best["id"])
         else:
             # no raw: keep the single first file only
             keep_ids.add(files[0]["id"])
@@ -728,7 +761,7 @@ def pair_raw_jpg(conn: sqlite3.Connection) -> int:
             if photo_jpg_count.get(raw_row["photo_id"], 0) >= 1:
                 continue
             partner = _find_jpg_partner(
-                raw_row, jpgs, claimed, photo_raw_count
+                raw_row, jpgs, claimed, photo_raw_count, conn
             )
             if partner is None:
                 continue
