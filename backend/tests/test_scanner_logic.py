@@ -330,7 +330,86 @@ def test_pair_raw_jpg_one_partner_per_raw(db, tmp_path):
     assert pair_raw_jpg(db) == 0  # idempotent: nothing left to pair
 
 
-# --- pure EXIF helpers (logic verified here, decode in the exif layer) -------
+def test_pair_raw_jpg_repeated_runs_do_not_snowball(db, tmp_path):
+    # Regression for the group #47 bug: Huawei batch exports share one
+    # mtime second, and the per-call claim set reset let every pipeline
+    # re-run wedge one more same-second jpg onto the same raw photo.
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "shot.dng", b"raw")
+    for i in range(4):
+        make_fake_file(src, f"copy_{i}.jpg", b"jpg")
+    _scan(db, src)
+    for path in [f"{src}/shot.dng"] + [f"{src}/copy_{i}.jpg" for i in range(4)]:
+        db.execute(
+            "UPDATE files SET captured_at = ? WHERE path = ?",
+            ("2026-06-11T22:46:08", path),
+        )
+    db.commit()
+
+    for _ in range(3):  # simulate three pipeline re-runs
+        pair_raw_jpg(db)
+
+    raw_photo = _files(db)[str(src / "shot.dng")]["photo_id"]
+    same = [
+        f["path"]
+        for f in db.execute("SELECT path FROM files WHERE photo_id = ?", (raw_photo,))
+    ]
+    assert len(same) == 2  # raw + exactly one jpg, forever
+    assert str(src / "shot.dng") in same
+    assert len(_photos(db)) == 4  # 1 pair + 3 standalone jpgs
+
+
+def test_repair_overmerged_photos_splits_snowballed_photo(db, tmp_path):
+    from app.scanner import repair_overmerged_photos
+
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "shot.dng", b"raw")
+    for i in range(5):
+        make_fake_file(src, f"copy_{i}.jpg", b"jpg")
+    _scan(db, src)
+    # fabricate the historical damage: all six files on one photo (the real
+    # snowball went through _merge_into_raw_photo, which also deleted the
+    # jpgs' own photo rows — mirror that)
+    photo_id = _files(db)[str(src / "shot.dng")]["photo_id"]
+    db.execute("UPDATE files SET photo_id = ? WHERE path != ?", (photo_id, str(src / "shot.dng")))
+    db.execute(
+        "DELETE FROM photos WHERE id NOT IN"
+        " (SELECT DISTINCT photo_id FROM files WHERE photo_id IS NOT NULL)"
+    )
+    db.commit()
+
+    assert repair_overmerged_photos(db) == 1
+
+    rows = _files(db)
+    kept = [
+        f for f in db.execute("SELECT path FROM files WHERE photo_id = ?", (photo_id,))
+    ]
+    assert len(kept) == 2  # raw + nearest jpg survive as the true pair
+    assert str(src / "shot.dng") in [k["path"] for k in kept]
+    assert len(_photos(db)) == 5  # pair + 4 split-out jpgs
+    # split photos get fresh ids, no quality scores, regroup next run
+    split_ids = {rows[f"{src}/copy_{i}.jpg"]["photo_id"] for i in range(5)} - {photo_id}
+    for pid in split_ids:
+        n = db.execute(
+            "SELECT COUNT(*) FROM photos WHERE id = ? AND group_id IS NULL", (pid,)
+        ).fetchone()[0]
+        assert n == 1
+
+
+def test_repair_keeps_normal_pairs_untouched(db, tmp_path):
+    from app.scanner import repair_overmerged_photos
+
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "IMG_1.dng", b"raw")
+    make_fake_file(src, "IMG_1.jpg", b"jpg")
+    make_fake_file(src, "lone.jpg", b"lone")
+    _scan(db, src)
+
+    assert repair_overmerged_photos(db) == 0
+    assert len(_photos(db)) == 2
 
 
 def test_parse_exif_datetime():

@@ -513,12 +513,18 @@ def _already_paired(raw_row, jpg_row) -> bool:
     return photo_id is not None and photo_id == jpg_row["photo_id"]
 
 
-def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int]):
-    """Pick the jpg to pair with a raw file: same stem first, then nearest Δt."""
+def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], conn=None):
+    """Pick the jpg to pair with a raw file: same stem first, then nearest Δt.
+
+    Jpgs whose photo already carries a raw are excluded — they are spoken
+    for, no matter which run asks.
+    """
     candidates = [
         jpg
         for jpg in jpg_rows
-        if jpg["id"] not in claimed and not _already_paired(raw_row, jpg)
+        if jpg["id"] not in claimed
+        and not _already_paired(raw_row, jpg)
+        and (conn is None or _photo_format_count(conn, jpg["photo_id"], "raw") == 0)
     ]
     if not candidates:
         return None
@@ -581,14 +587,113 @@ def _merge_into_raw_photo(conn: sqlite3.Connection, raw_row, jpg_row) -> None:
     )
 
 
+def _photo_format_count(conn: sqlite3.Connection, photo_id, fmt: str) -> int:
+    """How many files of ``fmt`` the photo currently carries (0 if None)."""
+    if photo_id is None:
+        return 0
+    row = conn.execute(
+        "SELECT COUNT(*) FROM files WHERE photo_id = ? AND format = ?",
+        (photo_id, fmt),
+    ).fetchone()
+    return row[0]
+
+
+def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
+    """Split photos that accumulated more than one raw-jpg pair.
+
+    Historical bug: pair_raw_jpg's idempotency check only excluded jpgs
+    already sharing the raw's photo, while the per-call claim set reset on
+    every pipeline run — so each re-run wed one more same-second jpg onto
+    the same raw photo ( Huawei batch exports share one mtime second ).
+    A photo now keeps at most one raw + its nearest-in-time jpg; every
+    extra file becomes a standalone photo again. Hashes survive on the
+    files rows; the split photos re-enter analysis (no quality_scores)
+    and regrouping on the next pipeline run.
+    Returns the number of photos split.
+    """
+    over = list(
+        conn.execute(
+            "SELECT photo_id, COUNT(*) AS n FROM files"
+            " WHERE photo_id IS NOT NULL"
+            " GROUP BY photo_id HAVING n > 2"
+        )
+    )
+    if not over:
+        return 0
+    split = 0
+    for row in over:
+        photo_id = row["photo_id"]
+        files = list(
+            conn.execute(
+                "SELECT id, format, captured_at, photo_id FROM files"
+                " WHERE photo_id = ? ORDER BY id",
+                (photo_id,),
+            )
+        )
+        raws = [f for f in files if f["format"] == "raw"]
+        keep_ids = {f["id"] for f in files if f["format"] != "raw" and f["format"] != "jpg"}
+        if raws:
+            keep_ids.add(raws[0]["id"])
+            # keep the jpg closest in capture time to the raw (true pair)
+            jpgs = [f for f in files if f["format"] == "jpg"]
+            if jpgs:
+                def gap(jpg):
+                    a = raws[0]["captured_at"]
+                    b = jpg["captured_at"]
+                    if a and b:
+                        try:
+                            from datetime import datetime
+                            return abs(
+                                (datetime.fromisoformat(a) - datetime.fromisoformat(b)).total_seconds()
+                            )
+                        except ValueError:
+                            return float("inf")
+                    return float("inf")
+                keep_ids.add(min(jpgs, key=lambda j: (gap(j), j["id"]))["id"])
+        else:
+            # no raw: keep the single first file only
+            keep_ids.add(files[0]["id"])
+        extras = [f for f in files if f["id"] not in keep_ids]
+        if not extras:
+            continue
+        old_ids = {f["photo_id"] for f in extras if f["photo_id"] is not None}
+        next_id = _next_photo_id(conn)
+        for extra in extras:
+            conn.execute(
+                "INSERT INTO photos (id, primary_file_id, group_id)"
+                " VALUES (?, ?, NULL)",
+                (next_id, extra["id"]),
+            )
+            conn.execute(
+                "UPDATE files SET photo_id = ? WHERE id = ?", (next_id, extra["id"])
+            )
+            next_id += 1
+        # drop now-empty photo shells left behind (jpg photos the files
+        # abandoned), together with their quality scores
+        for old_id in old_ids:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM files WHERE photo_id = ?", (old_id,)
+            ).fetchone()[0]
+            if n == 0:
+                conn.execute(
+                    "DELETE FROM quality_scores WHERE photo_id = ?", (old_id,)
+                )
+                conn.execute("DELETE FROM photos WHERE id = ?", (old_id,))
+        split += 1
+    conn.commit()
+    return split
+
+
 def pair_raw_jpg(conn: sqlite3.Connection) -> int:
     """Pair same-scene RAW+JPG files into single photos (primary stays RAW).
 
     Rule 1: same directory + same basename stem (IMG_1.CR3 / IMG_1.JPG).
     Rule 2: same directory + capture times less than 2 seconds apart.
     Already-paired files are left alone, so repeated calls are idempotent.
+    Repairs photos over-merged by older runs before pairing.
     Returns the number of newly formed pairs.
     """
+    repair_overmerged_photos(conn)
     rows = list(
         conn.execute(
             "SELECT id, path, format, photo_id, captured_at FROM files ORDER BY id"
@@ -606,7 +711,12 @@ def pair_raw_jpg(conn: sqlite3.Connection) -> int:
         for raw_row in (row for row in entries if row["format"] == "raw"):
             if raw_row["id"] in claimed:
                 continue
-            partner = _find_jpg_partner(raw_row, jpgs, claimed)
+            # a raw whose photo already carries a jpg is paired: re-runs must
+            # not wedge another same-second jpg onto it (per-call claim sets
+            # reset, so composition — not memory — must enforce idempotency)
+            if _photo_format_count(conn, raw_row["photo_id"], "jpg") >= 1:
+                continue
+            partner = _find_jpg_partner(raw_row, jpgs, claimed, conn)
             if partner is None:
                 continue
             _merge_into_raw_photo(conn, raw_row, partner)
