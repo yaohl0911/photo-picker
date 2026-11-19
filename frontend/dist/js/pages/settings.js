@@ -528,7 +528,7 @@ export function renderSettings(container) {
     loadBrowse(start);
   }
 
-  const browseBtn = $('#dir-browse');
+  const browseBtn = $('#dir-browse-btn');
   if (browseBtn) browseBtn.addEventListener('click', openBrowse);
 
   // --- 扫描作业轮询 ---------------------------------------------------------------
