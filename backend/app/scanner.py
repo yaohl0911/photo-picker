@@ -513,18 +513,20 @@ def _already_paired(raw_row, jpg_row) -> bool:
     return photo_id is not None and photo_id == jpg_row["photo_id"]
 
 
-def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], conn=None):
+def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], photo_raw_count=None):
     """Pick the jpg to pair with a raw file: same stem first, then nearest Δt.
 
     Jpgs whose photo already carries a raw are excluded — they are spoken
-    for, no matter which run asks.
+    for, no matter which run asks. ``photo_raw_count`` maps photo_id to the
+    number of raw files it carries (precomputed; a per-candidate COUNT(*)
+    would rescan the whole files table once per candidate).
     """
     candidates = [
         jpg
         for jpg in jpg_rows
-        if jpg["id"] not in claimed
-        and not _already_paired(raw_row, jpg)
-        and (conn is None or _photo_format_count(conn, jpg["photo_id"], "raw") == 0)
+        if jpg["id"] not in claimed and not _already_paired(raw_row, jpg)
+        and not (photo_raw_count is not None
+                 and photo_raw_count.get(jpg["photo_id"], 0) > 0)
     ]
     if not candidates:
         return None
@@ -585,17 +587,6 @@ def _merge_into_raw_photo(conn: sqlite3.Connection, raw_row, jpg_row) -> None:
     conn.execute(
         "UPDATE photos SET primary_file_id = ? WHERE id = ?", (raw_row["id"], raw_photo_id)
     )
-
-
-def _photo_format_count(conn: sqlite3.Connection, photo_id, fmt: str) -> int:
-    """How many files of ``fmt`` the photo currently carries (0 if None)."""
-    if photo_id is None:
-        return 0
-    row = conn.execute(
-        "SELECT COUNT(*) FROM files WHERE photo_id = ? AND format = ?",
-        (photo_id, fmt),
-    ).fetchone()
-    return row[0]
 
 
 def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
@@ -703,6 +694,26 @@ def pair_raw_jpg(conn: sqlite3.Connection) -> int:
     for row in rows:
         by_directory[os.path.dirname(row["path"])].append(row)
 
+    # one GROUP BY per format instead of a full-table COUNT(*) per
+    # (raw, candidate-jpg) pair — Huawei batch directories hold thousands
+    # of same-second files, and per-candidate scans turned quadratic
+    photo_jpg_count = {
+        row["photo_id"]: row["n"]
+        for row in conn.execute(
+            "SELECT photo_id, COUNT(*) AS n FROM files"
+            " WHERE photo_id IS NOT NULL AND format = 'jpg'"
+            " GROUP BY photo_id"
+        )
+    }
+    photo_raw_count = {
+        row["photo_id"]: row["n"]
+        for row in conn.execute(
+            "SELECT photo_id, COUNT(*) AS n FROM files"
+            " WHERE photo_id IS NOT NULL AND format = 'raw'"
+            " GROUP BY photo_id"
+        )
+    }
+
     claimed: set[int] = set()
     pair_count = 0
     for directory in sorted(by_directory):
@@ -714,14 +725,21 @@ def pair_raw_jpg(conn: sqlite3.Connection) -> int:
             # a raw whose photo already carries a jpg is paired: re-runs must
             # not wedge another same-second jpg onto it (per-call claim sets
             # reset, so composition — not memory — must enforce idempotency)
-            if _photo_format_count(conn, raw_row["photo_id"], "jpg") >= 1:
+            if photo_jpg_count.get(raw_row["photo_id"], 0) >= 1:
                 continue
-            partner = _find_jpg_partner(raw_row, jpgs, claimed, conn)
+            partner = _find_jpg_partner(
+                raw_row, jpgs, claimed, photo_raw_count
+            )
             if partner is None:
                 continue
             _merge_into_raw_photo(conn, raw_row, partner)
             claimed.add(raw_row["id"])
             claimed.add(partner["id"])
             pair_count += 1
+            # keep the maps in step with the merge we just performed
+            raw_photo = raw_row["photo_id"] or partner["photo_id"]
+            photo_jpg_count[raw_photo] = photo_jpg_count.get(raw_photo, 0) + 1
+            if partner["photo_id"] is not None and partner["photo_id"] != raw_photo:
+                photo_jpg_count[partner["photo_id"]] = 0
     conn.commit()
     return pair_count

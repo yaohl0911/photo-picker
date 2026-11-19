@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- photo membership lookups run per candidate during raw-jpg pairing;
+-- without this index each one rescans the whole files table
+CREATE INDEX IF NOT EXISTS idx_files_photo ON files(photo_id);
 """
 
 
