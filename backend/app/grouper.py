@@ -181,6 +181,9 @@ def _collect_bk_pairs(files, threshold, progress_cb, pairs):
         files_by_hex.setdefault(f["hash_phash"], []).append(f["id"])
     root = _bk_build(files_by_hex)
     total = len(files)
+    if progress_cb is not None:
+        # fire once even with zero hashed files so the UI shows the stage
+        progress_cb("group", 0, total)
     for done, f in enumerate(files, start=1):
         for hx in _bk_query(root, f["hash_phash"], threshold):
             for other in files_by_hex[hx]:

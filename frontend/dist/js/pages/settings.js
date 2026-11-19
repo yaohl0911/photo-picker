@@ -33,7 +33,18 @@ const STAGE_LABELS = {
   scan: '索引扫描',
   hash: '感知哈希',
   group: '相似分组',
+  analysis: '质量分析',
+  recommend: '推荐计算',
 };
+
+// 流水线的五个固定阶段，按执行顺序（job.note 的推进顺序）
+const PIPELINE_STAGES = [
+  { key: 'scan', label: '索引扫描' },
+  { key: 'hash', label: '感知哈希' },
+  { key: 'group', label: '相似分组' },
+  { key: 'analysis', label: '质量分析' },
+  { key: 'recommend', label: '推荐计算' },
+];
 
 const PHASE_LABELS = {
   running: '进行中',
@@ -147,6 +158,7 @@ export function renderSettings(container) {
         <span id="job-phase" data-testid="job-phase">准备中…</span>
         <span class="progress-row__pct" id="job-pct" data-testid="job-pct">0%</span>
       </div>
+      <ol class="stage-list" id="job-stages" data-testid="job-stages" hidden></ol>
       <p class="alert alert--error" id="job-error" data-testid="job-error" hidden></p>
     </section>
 
@@ -178,6 +190,7 @@ export function renderSettings(container) {
   const jobPhase = $('#job-phase');
   const jobPct = $('#job-pct');
   const jobError = $('#job-error');
+  const jobStages = $('#job-stages');
   const progressBar = section.querySelector('.progress');
   const pipelineBtn = $('#pipeline-btn');
   const pipelineReport = $('#pipeline-report');
@@ -317,6 +330,12 @@ export function renderSettings(container) {
       job.phase === 'running' && job.note
         ? `${PHASE_LABELS[job.phase] || job.phase} · ${STAGE_LABELS[job.note] || job.note}`
         : PHASE_LABELS[job.phase] || job.phase || '未知状态';
+
+    if (job.kind === 'pipeline') {
+      renderStages(job);
+    } else {
+      jobStages.hidden = true;
+    }
     jobFill.classList.toggle('is-done', job.phase === 'finished');
     jobFill.classList.toggle('is-failed', job.phase === 'failed');
 
@@ -333,6 +352,42 @@ export function renderSettings(container) {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
     }
+  }
+
+  // 流水线分阶段进度：五项列表，各自显示 完成✓ / 当前百分比 / 等待
+  function renderStages(job) {
+    const noteIdx = PIPELINE_STAGES.findIndex((s) => s.key === job.note);
+    const finished = job.phase === 'finished';
+    const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
+
+    jobStages.replaceChildren();
+    PIPELINE_STAGES.forEach((stage, i) => {
+      const li = document.createElement('li');
+      let phaseClass = 'pending';
+      if (finished) {
+        phaseClass = 'done';
+      } else if (noteIdx < 0) {
+        phaseClass = i === 0 ? 'current' : 'pending';
+      } else if (i < noteIdx) {
+        phaseClass = 'done';
+      } else if (i === noteIdx) {
+        phaseClass = 'current';
+      }
+      li.className = `stage-list__item is-${phaseClass}`;
+      li.dataset.stage = stage.key;
+      const label = document.createElement('span');
+      label.className = 'stage-list__label';
+      label.textContent = stage.label;
+      li.appendChild(label);
+      if (phaseClass === 'current') {
+        const pctSpan = document.createElement('span');
+        pctSpan.className = 'stage-list__pct';
+        pctSpan.textContent = Math.round(progress * 100) + '%';
+        li.appendChild(pctSpan);
+      }
+      jobStages.appendChild(li);
+    });
+    jobStages.hidden = false;
   }
 
   async function pollOnce() {

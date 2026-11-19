@@ -530,8 +530,11 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
         " ORDER BY p.id"
     ).fetchall()
     analyzed, failed, errors = 0, 0, []
+    analysis_total = len(pending)
     from app.quality import analyze_photo
-    for row in pending:
+    for index, row in enumerate(pending, start=1):
+        if progress_cb is not None:
+            progress_cb("analysis", index, analysis_total)
         try:
             scores = analyze_photo(row["path"], face_engine)
         except Exception as exc:  # native dep unavailable, decode error, ...
@@ -557,7 +560,11 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
     report["analysis"] = {"analyzed": analyzed, "failed": failed,
                           "errors": errors}
 
+    if progress_cb is not None:
+        progress_cb("recommend", 0, 1)
     recalculated = recommender.recompute_all(
         conn, weights=effective_weights(conn))
+    if progress_cb is not None:
+        progress_cb("recommend", 1, 1)
     report["recommend"] = {"recalculated": len(recalculated)}
     return report

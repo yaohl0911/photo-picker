@@ -88,6 +88,17 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.middleware("http")
+    async def _no_cache_code_assets(request: Request, call_next):
+        # HTML/JS/CSS must always revalidate: users otherwise keep a stale
+        # settings.js after an upgrade and "lose" freshly-fixed UI states
+        # (e.g. pipeline resume) even though the backend is fine.
+        response = await call_next(request)
+        path = request.url.path
+        if path == "/" or path.endswith((".html", ".js", ".css")) or path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     @app.exception_handler(KeyError)
     async def _missing(request: Request, exc: KeyError):
         detail = exc.args[0] if exc.args else str(exc)

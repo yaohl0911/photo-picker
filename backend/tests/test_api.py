@@ -589,3 +589,32 @@ def test_run_full_pipeline_blocking(db, tmp_path):
     assert api.get_overview(conn)["last_scan_at"] is not None
     # no crash, all phases present
     assert set(report) == {"scan", "hashing", "grouping", "analysis", "recommend"}
+
+
+def test_run_full_pipeline_blocking_reports_all_five_stages(db, tmp_path):
+    """progress_cb must fire for every stage (scan/hash/group/analysis/
+    recommend) with positional (phase, done, total) args — the UI's
+    per-stage progress list depends on it."""
+    conn = db
+    src = tmp_path / "lib"
+    src.mkdir()
+    for i in range(3):
+        make_fake_file(src, "IMG_%d.JPG" % i, content=b"fake-%d" % i)
+    from app.config import update_settings
+    update_settings(conn, source_dirs=[str(src)],
+                    rejected_root=str(tmp_path / "rejected"))
+
+    calls = []
+    cb = lambda *a, **kw: calls.append(a if a else tuple(kw.values()))
+    api.run_full_pipeline_blocking(conn, progress_cb=cb)
+
+    phases = {c[0] for c in calls}
+    assert phases == {"scan", "hash", "group", "analysis", "recommend"}, phases
+    # every stage reports progress within 1..total, and finishes at total
+    by_phase = {}
+    for c in calls:
+        by_phase.setdefault(c[0], []).append(c)
+    for phase, entries in by_phase.items():
+        # (group may legitimately be 0/0 when nothing was hashed yet)
+        assert all(0 <= e[1] <= e[2] and e[2] >= 0 for e in entries), (phase, entries)
+        assert entries[-1][1] == entries[-1][2], (phase, entries[-1])

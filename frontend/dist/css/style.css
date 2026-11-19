@@ -1501,3 +1501,61 @@ kbd {
   .history-row.is-open .history-row__detail { padding-left: 16px; }
 }
 
+
+/* ---------- 流水线分阶段进度（stage-list）-------------------------------------- */
+
+.stage-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.stage-list__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  position: relative;
+  padding: 1px 0 1px 24px;
+  font-size: 13px;
+  color: var(--text-3); /* 等待中 */
+}
+
+.stage-list__item::before {
+  position: absolute;
+  left: 2px;
+  width: 16px;
+  text-align: center;
+  content: '○';
+  color: var(--text-3);
+}
+
+.stage-list__item.is-done {
+  color: var(--text-2);
+}
+
+.stage-list__item.is-done::before {
+  content: '✓';
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.stage-list__item.is-current {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.stage-list__item.is-current::before {
+  content: '●';
+  color: var(--accent);
+  font-size: 11px;
+  top: 1px;
+}
+
+.stage-list__pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  font-weight: 600;
+}
