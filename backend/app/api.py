@@ -572,3 +572,42 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
         progress_cb("recommend", 1, 1)
     report["recommend"] = {"recalculated": len(recalculated)}
     return report
+
+
+# --- filesystem browsing -------------------------------------------------------
+
+def list_dirs(conn, path):
+    """List subdirectories of ``path`` for the directory picker UI.
+
+    Only directory names are returned (never files) — the picker is for
+    choosing source roots, and a name-only listing keeps the API's
+    information surface small. ``~`` expands to the user's home.
+    Raises ValueError for missing paths or non-directories.
+    """
+    import os
+    expanded = os.path.expanduser(path or "~")
+    if not os.path.isdir(expanded):
+        raise ValueError("路径不存在或不是文件夹：{}".format(expanded))
+    parent = os.path.dirname(expanded.rstrip("/")) or None
+    if parent == expanded:  # filesystem root
+        parent = None
+    try:
+        names = [n for n in os.listdir(expanded)
+                 if os.path.isdir(os.path.join(expanded, n))]
+    except OSError as exc:
+        raise ValueError("无法读取该文件夹：{}".format(exc)) from exc
+    names.sort(key=str.lower)
+    dirs = [{"name": n, "path": os.path.join(expanded, n)} for n in names]
+    return {
+        "path": expanded,
+        "parent": parent,
+        "dirs": dirs,
+        "home": os.path.expanduser("~"),
+        "shortcuts": {
+            "主目录": os.path.expanduser("~"),
+            "桌面": os.path.expanduser("~/Desktop"),
+            "下载": os.path.expanduser("~/Downloads"),
+            "图片": os.path.expanduser("~/Pictures"),
+            "文档": os.path.expanduser("~/Documents"),
+        },
+    }

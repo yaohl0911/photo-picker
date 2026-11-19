@@ -146,3 +146,30 @@ def test_pipeline_run_returns_job_id_immediately(client, tmp_path):
     # job shows up in the list and reports its kind
     lst = client.get("/api/jobs").json()["jobs"]
     assert any(j["id"] == job_id and j["kind"] == "pipeline" for j in lst)
+
+
+# --- filesystem browsing endpoint ------------------------------------------------
+
+def test_fs_list_returns_directories(client, tmp_path):
+    (tmp_path / "sub1").mkdir()
+    (tmp_path / "sub2").mkdir()
+    r = client.get("/api/fs/list", params={"path": str(tmp_path)})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["path"] == str(tmp_path)
+    assert [d["name"] for d in body["dirs"]] == ["sub1", "sub2"]
+    assert body["home"]
+    assert "主目录" in body["shortcuts"]
+
+
+def test_fs_list_default_path_is_home(client):
+    r = client.get("/api/fs/list")
+    assert r.status_code == 200
+    assert r.json()["path"] == r.json()["home"]
+
+
+def test_fs_list_missing_path_is_422(client, tmp_path):
+    r = client.get(
+        "/api/fs/list", params={"path": str(tmp_path / "nope")})
+    assert r.status_code == 422
+    assert "不存在" in r.json()["detail"]

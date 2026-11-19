@@ -15,7 +15,8 @@
 // 添加/删除/保存时写入，服务端加载成功时以服务端为准重写，
 // 仅作为离线降级的后备副本。
 
-import { getOverview, getSettings, startScan, getJob, listJobs, runPipeline } from '../api.js';
+import { getOverview, getSettings, startScan, getJob, listJobs, runPipeline, fsList } from '../api.js';
+import { toast } from '../util.js';
 
 const STORAGE_KEY = 'photo-picker.source_dirs';
 const POLL_INTERVAL_MS = 1000;
@@ -133,8 +134,10 @@ export function renderSettings(container) {
         <h2 class="card__title" id="dirs-title">源目录</h2>
       </div>
       <form class="dir-form" id="dir-form">
+        <button class="btn dir-form__browse" id="dir-browse-btn" type="button"
+                data-testid="dir-browse">浏览…</button>
         <input class="input dir-form__input" id="dir-input" type="text"
-               placeholder="输入照片目录的绝对路径，例如 /Users/you/Pictures/2024"
+               placeholder="点「浏览…」选择目录，或输入绝对路径 /Users/you/Pictures"
                autocomplete="off" autocapitalize="off" spellcheck="false"
                aria-label="源目录路径">
         <button class="btn dir-form__add" id="dir-add-btn" type="submit">添加</button>
@@ -295,28 +298,238 @@ export function renderSettings(container) {
     }
   }
 
-  dirForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const value = dirInput.value.trim();
-    if (!value) {
+  /** 校验并加入源目录列表；返回 true=已加入（给目录选择器复用）。 */
+  function addDir(value) {
+    const trimmed = (value || '').trim();
+    if (!trimmed) {
       showDirError('请输入目录路径');
-      dirInput.focus();
-      return;
+      return false;
     }
-    if (state.dirs.includes(value)) {
+    if (state.dirs.includes(trimmed)) {
       showDirError('该目录已在列表中');
-      dirInput.focus();
-      return;
+      return false;
     }
     showDirError(null);
-    state.dirs.push(value);
+    state.dirs.push(trimmed);
     saveDirs(state.dirs);
     dirInput.value = '';
     renderDirs();
-    dirInput.focus();
+    return true;
+  }
+
+  dirForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (addDir(dirInput.value)) dirInput.focus();
   });
 
   dirInput.addEventListener('input', () => showDirError(null));
+
+  // --- 目录浏览对话框（源目录点选） -----------------------------------------------
+
+  // 后端 GET /api/fs/list 列子目录（只有目录名，无文件），本机回环监听。
+  // 对话框：快捷入口 → 逐层点入 → 面包屑跳层 → 也可粘贴路径直达；
+  // 「选择此目录」回填并直接加入源目录列表。
+  let browseDialog = null;
+  let browseCurrent = null;
+  let browseBusy = false;
+
+  function ensureBrowseDialog() {
+    if (browseDialog && browseDialog.isConnected) return browseDialog;
+    browseDialog = document.createElement('dialog');
+    browseDialog.className = 'modal dir-browser';
+    browseDialog.dataset.testid = 'dir-browser';
+    const form = document.createElement('form');
+    form.method = 'dialog'; // Esc 关闭原生支持
+    form.className = 'dir-browser__form';
+    const head = document.createElement('div');
+    head.className = 'dir-browser__head';
+
+    const title = document.createElement('h3');
+    title.className = 'dir-browser__title';
+    title.textContent = '选择源目录';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'submit';
+    closeBtn.className = 'dir-browser__close';
+    closeBtn.textContent = '×';
+    closeBtn.setAttribute('aria-label', '关闭');
+
+    head.append(title, closeBtn);
+
+    // 路径直达输入
+    const jumpRow = document.createElement('div');
+    jumpRow.className = 'dir-browser__jump';
+    const jumpInput = document.createElement('input');
+    jumpInput.type = 'text';
+    jumpInput.className = 'input dir-browser__jump-input';
+    jumpInput.dataset.testid = 'dir-browser-path';
+    jumpInput.placeholder = '粘贴路径直达，或点下方目录逐层进入';
+    jumpInput.setAttribute('aria-label', '路径直达');
+    const jumpBtn = document.createElement('button');
+    jumpBtn.type = 'button';
+    jumpBtn.className = 'btn';
+    jumpBtn.textContent = '前往';
+    jumpBtn.dataset.testid = 'dir-browser-go';
+    jumpBtn.addEventListener('click', () => loadBrowse(jumpInput.value.trim() || '~'));
+    jumpInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        loadBrowse(jumpInput.value.trim() || '~');
+      }
+    });
+    jumpRow.append(jumpInput, jumpBtn);
+
+    // 快捷入口
+    const shortcuts = document.createElement('div');
+    shortcuts.className = 'dir-browser__shortcuts';
+    shortcuts.dataset.testid = 'dir-browser-shortcuts';
+
+    // 面包屑 + 列表 + 错误
+    const crumbs = document.createElement('nav');
+    crumbs.className = 'dir-browser__crumbs';
+    crumbs.dataset.testid = 'dir-browser-crumbs';
+
+    const list = document.createElement('ul');
+    list.className = 'dir-browser__list';
+    list.dataset.testid = 'dir-browser-list';
+
+    const empty = document.createElement('p');
+    empty.className = 'dir-browser__empty';
+    empty.textContent = '此目录下没有子文件夹。';
+    empty.hidden = true;
+
+    const error = document.createElement('p');
+    error.className = 'field-error';
+    error.dataset.testid = 'dir-browser-error';
+    error.hidden = true;
+
+    const foot = document.createElement('div');
+    foot.className = 'dir-browser__foot';
+    const currentLabel = document.createElement('code');
+    currentLabel.className = 'dir-browser__current';
+    currentLabel.dataset.testid = 'dir-browser-current';
+    const chooseBtn = document.createElement('button');
+    chooseBtn.type = 'button';
+    chooseBtn.className = 'btn btn--primary';
+    chooseBtn.dataset.testid = 'dir-browser-choose';
+    chooseBtn.textContent = '选择此目录';
+    chooseBtn.disabled = true;
+    chooseBtn.addEventListener('click', () => {
+      if (!browseCurrent || browseBusy) return;
+      if (addDir(browseCurrent)) {
+        toast(`已添加源目录：${browseCurrent}`);
+        browseDialog.close();
+      }
+    });
+    foot.append(currentLabel, chooseBtn);
+
+    form.append(head, jumpRow, shortcuts, crumbs, empty, list, error, foot);
+    browseDialog.appendChild(form);
+    document.body.appendChild(browseDialog);
+    return browseDialog;
+  }
+
+  async function loadBrowse(path) {
+    const dlg = ensureBrowseDialog();
+    const listEl = dlg.querySelector('.dir-browser__list');
+    const emptyEl = dlg.querySelector('.dir-browser__empty');
+    const errEl = dlg.querySelector('.dir-browser-error') || dlg.querySelector('[data-testid="dir-browser-error"]');
+    const crumbsEl = dlg.querySelector('[data-testid="dir-browser-crumbs"]');
+    const currentEl = dlg.querySelector('[data-testid="dir-browser-current"]');
+    const chooseBtn = dlg.querySelector('[data-testid="dir-browser-choose"]');
+    const shortcutsEl = dlg.querySelector('[data-testid="dir-browser-shortcuts"]');
+    const jumpInput = dlg.querySelector('[data-testid="dir-browser-path"]');
+    browseBusy = true;
+    errEl.hidden = true;
+    chooseBtn.disabled = true;
+    listEl.replaceChildren();
+    emptyEl.hidden = true;
+    const loading = document.createElement('li');
+    loading.className = 'dir-browser__loading';
+    loading.textContent = '读取目录中…';
+    listEl.appendChild(loading);
+    let data;
+    try {
+      data = await fsList(path);
+    } catch (err) {
+      browseBusy = false;
+      loading.remove();
+      errEl.textContent = err.message || '无法读取该路径';
+      errEl.hidden = false;
+      return; // 保留当前目录内容，仅提示错误
+    }
+    if (!dlg.open) return; // 对话框已关闭
+    browseBusy = false;
+    browseCurrent = data.path;
+    jumpInput.value = data.path;
+    currentEl.textContent = data.path;
+    chooseBtn.disabled = false;
+
+    // 面包屑：path 逐段可点
+    crumbsEl.replaceChildren();
+    const parts = data.path.split('/').filter(Boolean);
+    const rootBtn = crumbBtn('/', '/');
+    crumbsEl.append(rootBtn);
+    let acc = '';
+    for (const part of parts) {
+      acc += '/' + part;
+      const sep = document.createElement('span');
+      sep.className = 'dir-browser__crumb-sep';
+      sep.textContent = '/';
+      crumbsEl.append(sep, crumbBtn(part, acc));
+    }
+
+    // 快捷入口（重复渲染幂等）
+    shortcutsEl.replaceChildren();
+    const entries = Object.entries(data.shortcuts || {});
+    for (const [label, dir] of entries) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn btn--chip';
+      b.dataset.testid = 'dir-browser-shortcut';
+      b.textContent = label;
+      b.title = dir;
+      b.addEventListener('click', () => loadBrowse(dir));
+      shortcutsEl.appendChild(b);
+    }
+
+    // 子目录列表
+    listEl.replaceChildren();
+    for (const d of data.dirs) {
+      const li = document.createElement('li');
+      li.className = 'dir-browser__item';
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dir-browser__item-btn';
+      b.dataset.testid = 'dir-browser-item';
+      b.textContent = d.name;
+      b.title = d.path;
+      b.addEventListener('click', () => loadBrowse(d.path));
+      li.appendChild(b);
+      listEl.appendChild(li);
+    }
+    emptyEl.hidden = data.dirs.length > 0;
+
+    function crumbBtn(label, target) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'dir-browser__crumb';
+      b.textContent = label === '/' ? 'Macintosh HD' : label;
+      b.title = target;
+      b.addEventListener('click', () => loadBrowse(target));
+      return b;
+    }
+  }
+
+  function openBrowse() {
+    const dlg = ensureBrowseDialog();
+    if (!dlg.open) dlg.showModal();
+    const start = dirInput.value.trim() || browseCurrent || '~';
+    loadBrowse(start);
+  }
+
+  const browseBtn = $('#dir-browse');
+  if (browseBtn) browseBtn.addEventListener('click', openBrowse);
 
   // --- 扫描作业轮询 ---------------------------------------------------------------
 
@@ -646,9 +859,15 @@ export function renderSettings(container) {
   loadServerSettings(); // 与统计加载并行：服务端优先，失败降级 localStorage
   resumeActiveJob(); // 恢复后台仍在跑的作业进度（切页返回场景）
 
-  // 离开页面前清掉轮询/计时定时器
+  // 离开页面前清掉轮询/计时定时器和挂在 body 上的目录浏览对话框
   return function cleanup() {
     stopPolling();
     stopElapsedTimer();
+    if (browseDialog && browseDialog.isConnected) {
+      browseDialog.close();
+      browseDialog.remove();
+      browseDialog = null;
+      browseCurrent = null;
+    }
   };
 }

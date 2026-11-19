@@ -1606,3 +1606,54 @@ kbd {
 
 .stage-row.is-done .stage-row__time { color: var(--text-2); }
 .stage-row__time.is-live { color: var(--accent); font-weight: 600; }
+
+/* --- 源目录浏览对话框 --- */
+.dir-form__browse { flex: 0 0 auto; }
+.modal.dir-browser {
+  width: min(680px, calc(100vw - 48px));
+  max-height: min(78vh, 720px);
+  border: 1px solid var(--line-2);
+  border-radius: 14px;
+  padding: 0;
+  background: var(--bg-0);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .18);
+}
+.dir-browser__form { display: flex; flex-direction: column; padding: 18px 20px; gap: 12px; }
+.dir-browser__head { display: flex; align-items: center; justify-content: space-between; }
+.dir-browser__title { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-1); }
+.dir-browser__close {
+  border: 0; background: none; font-size: 18px; line-height: 1;
+  color: var(--text-3); cursor: pointer; padding: 4px 8px; border-radius: 6px;
+}
+.dir-browser__close:hover { background: var(--bg-2); color: var(--text-1); }
+.dir-browser__jump { display: flex; gap: 8px; }
+.dir-browser__jump-input { flex: 1; font-size: 13px; }
+.dir-browser__shortcuts { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn--chip { padding: 4px 12px; font-size: 12px; border-radius: 999px; }
+.dir-browser__crumbs { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; font-size: 13px; }
+.dir-browser__crumb {
+  border: 0; background: none; color: var(--accent);
+  cursor: pointer; padding: 2px 6px; border-radius: 6px; font-size: 13px;
+}
+.dir-browser__crumb:hover { background: var(--bg-2); text-decoration: underline; }
+.dir-browser__crumb-sep { color: var(--text-3); }
+.dir-browser__list {
+  list-style: none; margin: 0; padding: 6px; overflow-y: auto;
+  max-height: 42vh; border: 1px solid var(--line-2); border-radius: 10px;
+  background: var(--bg-1);
+}
+.dir-browser__item-btn {
+  display: block; width: 100%; text-align: left;
+  border: 0; background: none; color: var(--text-1);
+  padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 14px;
+}
+.dir-browser__item-btn::before { content: '📁 '; }
+.dir-browser__item-btn:hover { background: var(--bg-2); }
+.dir-browser__loading, .dir-browser__empty {
+  padding: 14px; color: var(--text-3); font-size: 13px; margin: 0;
+}
+.dir-browser__foot { display: flex; align-items: center; gap: 12px; }
+.dir-browser__current {
+  flex: 1; font-size: 12px; color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

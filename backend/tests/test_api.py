@@ -642,3 +642,40 @@ def test_decide_group_zero_keep_rejects_whole_group(scene):
     for p in scene["paths"].values():
         if "IMG_4" in str(p) or "IMG_5" in str(p):
             assert not p.exists()
+
+
+# --- filesystem browsing (directory picker) ------------------------------------
+
+class TestListDirs:
+    def test_lists_only_subdirectories_sorted(self, db, tmp_path):
+        (tmp_path / "b_dir").mkdir()
+        (tmp_path / "a_dir").mkdir()
+        (tmp_path / "z_dir").mkdir()
+        (tmp_path / "note.txt").write_text("not a dir")
+
+        res = api.list_dirs(db, str(tmp_path))
+
+        assert res["path"] == str(tmp_path)
+        assert [d["name"] for d in res["dirs"]] == ["a_dir", "b_dir", "z_dir"]
+        assert res["parent"] is not None
+
+    def test_parent_of_root_is_none(self, db):
+        res = api.list_dirs(db, "/")
+        assert res["parent"] is None
+        assert isinstance(res["dirs"], list)
+
+    def test_shortcuts_and_home_present(self, db):
+        res = api.list_dirs(db, "~")
+        assert res["path"] == res["home"]
+        assert "下载" in res["shortcuts"]
+        assert res["shortcuts"]["主目录"] == res["home"]
+
+    def test_missing_path_raises_value_error(self, db, tmp_path):
+        with pytest.raises(ValueError):
+            api.list_dirs(db, str(tmp_path / "nope"))
+
+    def test_file_path_raises_value_error(self, db, tmp_path):
+        f = tmp_path / "f.txt"
+        f.write_text("x")
+        with pytest.raises(ValueError):
+            api.list_dirs(db, str(f))

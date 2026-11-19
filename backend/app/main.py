@@ -203,6 +203,13 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     def settings(conn: sqlite3.Connection = Depends(get_conn)):
         return api.get_settings(conn)
 
+    # --- filesystem browsing (directory picker) -------------------------------
+
+    @app.get("/api/fs/list")
+    def fs_list(path: str = "~",
+                conn: sqlite3.Connection = Depends(get_conn)):
+        return api.list_dirs(conn, path)
+
     # --- jobs / scan / pipeline -----------------------------------------------
 
     @app.post("/api/scan")
