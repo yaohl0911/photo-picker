@@ -531,8 +531,8 @@ def test_list_history_validation(db):
 def test_get_settings_defaults(db):
     data = api.get_settings(db)
     assert data["source_dirs"] == []
-    assert data["rejected_root"] == os.path.abspath(
-        os.path.join("data", "_photo_picker_rejected"))
+    # empty rejected_root = scattered per-source mode (no single root)
+    assert data["rejected_root"] == ""
     assert data["phash_threshold"] == 10
     assert data["time_window_sec"] == 60
 
@@ -555,10 +555,8 @@ def test_get_settings_types_and_derived_rejected_root(db, tmp_path):
     assert isinstance(data["source_dirs"], list)
     assert all(isinstance(d, str) for d in data["source_dirs"])
     assert isinstance(data["rejected_root"], str)
-    # rejected_root 为空时按首个源目录推导：<dir>/../_photo_picker_rejected
-    assert data["rejected_root"] == os.path.abspath(
-        os.path.join(str(tmp_path / "photos"), os.pardir,
-                     "_photo_picker_rejected"))
+    # 无显式设置：分散模式——每个照片文件夹内一个 _photo_picker_rejected
+    assert data["rejected_root"] == ""
     assert isinstance(data["phash_threshold"], int)
     assert isinstance(data["time_window_sec"], int)
 

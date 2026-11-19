@@ -8,9 +8,13 @@ the actual file moves.
 
 Semantics:
 - Every files row of a non-kept photo (RAW+JPG pair included) moves to
-  ``<rejected_root>/<path relative to the first source dir containing
-  it>``; files outside every source dir land at
-  ``<rejected_root>/<basename>``. The subdirectory layout is preserved.
+  the rejected directory for its source: by default
+  ``<its source dir>/_photo_picker_rejected/<path relative to that
+  source dir>`` — rejected photos stay inside the folder they came
+  from, so multiple photo folders never mix. An explicit
+  ``rejected_root`` setting centralizes everything under that one
+  directory instead. Files outside every source dir land at
+  ``<cwd>/data/_photo_picker_rejected/<basename>``.
 - Destinations are never overwritten: an existing target gets a ``_1``,
   ``_2``... suffix inserted before the extension.
 - Every successful move is recorded in move_log with its decision. A
@@ -28,11 +32,10 @@ import shutil
 import sqlite3
 from datetime import datetime
 
-from app.config import get_settings
+from app.config import REJECTED_DIR_NAME, get_settings
 
 logger = logging.getLogger(__name__)
 
-REJECTED_DIR_NAME = "_photo_picker_rejected"
 FALLBACK_REJECTED_DIR = os.path.join("data", REJECTED_DIR_NAME)
 
 
@@ -47,19 +50,39 @@ def _now() -> str:
 def default_rejected_root(conn: sqlite3.Connection) -> str:
     """Resolve the effective rejected-root directory as an absolute path.
 
-    Priority: an explicit ``rejected_root`` setting, else
-    ``<first source dir>/../_photo_picker_rejected``, else
-    ``<cwd>/data/_photo_picker_rejected`` when no source dirs exist.
+    An explicit ``rejected_root`` setting wins (all photos from all
+    source dirs land under that one directory). Empty otherwise: the
+    default mode scatters rejected photos into a ``_photo_picker_rejected``
+    folder INSIDE each source dir, so photos from different folders never
+    mix — there is no single root, and this returns "" to say so.
     """
-    settings = get_settings(conn)
-    explicit = settings.get("rejected_root") or ""
+    explicit = get_settings(conn).get("rejected_root") or ""
     if explicit:
         return os.path.abspath(explicit)
-    source_dirs = settings.get("source_dirs") or []
-    if source_dirs:
-        return os.path.abspath(
-            os.path.join(source_dirs[0], os.pardir, REJECTED_DIR_NAME)
-        )
+    return ""
+
+
+def rejected_dir_for(conn: sqlite3.Connection, src: str) -> str:
+    """Directory holding the rejected copy of one source file.
+
+    Explicit ``rejected_root`` setting: that directory (centralized).
+    Default: ``<the source dir containing src>/_photo_picker_rejected``,
+    preserving the file's path relative to ITS source dir. Files outside
+    every source dir fall back to ``<cwd>/data/_photo_picker_rejected``.
+    """
+    explicit = get_settings(conn).get("rejected_root") or ""
+    if explicit:
+        return os.path.abspath(explicit)
+    src_abs = os.path.abspath(src)
+    for source_dir in get_settings(conn).get("source_dirs") or []:
+        try:
+            rel = os.path.relpath(src_abs, os.path.abspath(source_dir))
+        except ValueError:  # different drives on Windows
+            continue
+        if rel != os.pardir and not rel.startswith(os.pardir + os.sep):
+            return os.path.abspath(
+                os.path.join(source_dir, REJECTED_DIR_NAME)
+            )
     return os.path.abspath(FALLBACK_REJECTED_DIR)
 
 
@@ -102,7 +125,6 @@ def apply_decision(
     if learn:
         _record_and_train(conn, group_id, keep_list, decision_id)
 
-    rejected_root = default_rejected_root(conn)
     for photo_id in group_photo_ids:
         if photo_id in keep_set:
             continue
@@ -112,7 +134,9 @@ def apply_decision(
         ).fetchall()
         for row in rows:
             try:
-                _move_file(conn, row["id"], row["path"], rejected_root, decision_id)
+                # per-file: each photo rejects into ITS OWN source folder
+                rejected_dir = rejected_dir_for(conn, row["path"])
+                _move_file(conn, row["id"], row["path"], rejected_dir, decision_id)
             except MoveError as exc:
                 logger.warning("executor move failed: %s", exc)
                 _record_execute_error(conn, str(exc))

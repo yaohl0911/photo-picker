@@ -117,6 +117,26 @@ def test_scan_walks_recursively_but_skips_hidden_and_rejected(db, tmp_path):
     assert paths == {"ok.jpg", "top.jpg"}
 
 
+def test_scan_skips_named_rejected_dir_even_without_explicit_root(db, tmp_path):
+    # Default scattered mode: each source holds its own
+    # _photo_picker_rejected; those copies must never be re-indexed,
+    # and pruning happens at any nesting depth.
+    src = tmp_path / "src"
+    (src / "sub" / "_photo_picker_rejected").mkdir(parents=True)
+    (src / "_photo_picker_rejected").mkdir()
+    make_fake_file(src, "top.jpg")
+    make_fake_file(src / "sub", "ok.jpg")
+    make_fake_file(src / "_photo_picker_rejected", "moved1.jpg")
+    make_fake_file(src / "sub" / "_photo_picker_rejected", "moved2.jpg")
+
+    update_settings(db, source_dirs=[str(src)], rejected_root="")
+    report = scan(db)
+
+    paths = {os.path.basename(path) for path in _files(db)}
+    assert paths == {"ok.jpg", "top.jpg"}
+    assert report.total_files == 2
+
+
 # --- incremental behavior ----------------------------------------------------
 
 

@@ -7,11 +7,16 @@ round-trip through get_settings() always yields a list.
 import json
 import sqlite3
 
+# Name of the rejected-photos directory. Default mode scatters it into
+# EVERY source dir (photos never mix across folders); scanner prunes any
+# directory with this name so rejected copies are never re-indexed.
+REJECTED_DIR_NAME = "_photo_picker_rejected"
+
 _DEFAULTS = {
     "source_dirs": [],       # list of directories to scan
     "phash_threshold": 10,   # pHash hamming distance threshold
     "time_window_sec": 60,   # capture-time clustering window
-    "rejected_root": "",     # empty -> default computed from first source dir
+    "rejected_root": "",     # empty -> per-source-dir _photo_picker_rejected
     "face_engine": "auto",   # auto | mediapipe | haar | none
 }
 

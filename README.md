@@ -46,7 +46,7 @@ uv pip install -r requirements.txt        # 或 .venv/bin/pip install -r require
 
 - `data/photo_picker.db` —— SQLite 数据库：文件索引、哈希、质量分析、相似分组、推荐结果、决策历史、偏好权重。删除该文件即可完全重置。
 - `data/` —— 缩略图等派生缓存。
-- `_photo_picker_rejected/` —— 淘汰目录（默认在首个源目录同级，可在设置中指定）：内部结构与原目录完全平行，移入的照片**永不删除**，历史页可撤销恢复。
+- `<每个照片文件夹>/_photo_picker_rejected/` —— 淘汰目录（默认分散模式：各照片文件夹内部的 `_photo_picker_rejected`，互不混杂，内部结构与该文件夹平行；显式设置 `rejected_root` 则集中到一处）：移入的照片**永不删除**，历史页可撤销恢复。扫描器会自动跳过该目录名，不会重复索引。
 
 ## 开发
 

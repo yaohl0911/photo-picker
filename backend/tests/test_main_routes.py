@@ -102,7 +102,8 @@ def test_get_settings_defaults(client):
     assert data["source_dirs"] == []
     assert data["phash_threshold"] == 10
     assert data["time_window_sec"] == 60
-    assert isinstance(data["rejected_root"], str) and data["rejected_root"]
+    # scattered mode: no explicit rejected_root, no single root path
+    assert data["rejected_root"] == ""
 
 
 def test_get_settings_after_scan(client, tmp_path):

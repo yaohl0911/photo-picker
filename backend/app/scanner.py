@@ -24,7 +24,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Callable
 
-from app.config import get_settings
+from app.config import REJECTED_DIR_NAME, get_settings
 
 #: Extension -> canonical format. The RAW set follows the rawpy/LibRaw
 #: support matrix so pair_raw_jpg() sees every vendor's files.
@@ -294,6 +294,9 @@ def _discover(source_dirs: list[str], rejected_root: str) -> list[str]:
                 name
                 for name in dirnames
                 if not name.startswith(".")
+                # rejected copies live inside source dirs by default;
+                # never re-index them (also covers the explicit-root mode)
+                and name != REJECTED_DIR_NAME
                 and not (
                     rejected
                     and _is_within(os.path.join(dirpath, name), rejected)

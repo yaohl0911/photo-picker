@@ -478,11 +478,12 @@ def get_settings(conn):
 
     Reads ``app.config.get_settings`` and resolves every path to absolute
     form: ``source_dirs`` entries are abspath'd (empty list stays []),
-    and ``rejected_root`` returns the *effective* directory via
-    ``executor.default_rejected_root`` (explicit setting, else
-    ``<first source dir>/../_photo_picker_rejected``, else the
-    ``data/`` fallback) so the UI shows where rejected files will
-    actually land. Key names/types follow app.config:
+    and ``rejected_root`` returns the effective directory via
+    ``executor.default_rejected_root``: an explicit setting is reported
+    as the single centralized directory; an empty string means the
+    default scattered mode, where each photo's rejected copy lands in
+    the ``_photo_picker_rejected`` folder INSIDE its own source dir.
+    Key names/types follow app.config:
     ``phash_threshold``/``time_window_sec`` are ints.
     """
     settings = get_config_settings(conn)

@@ -81,17 +81,15 @@ def mk_group(db, src_root, photo_specs):
 # --- default rejected root -------------------------------------------------
 
 
-def test_default_rejected_root_uses_first_source_dir(db):
+def test_default_rejected_root_without_explicit_setting_is_scattered(db):
+    # No explicit setting: rejected photos scatter into per-source
+    # folders — there is no single root, so this reports "".
     update_settings(db, source_dirs=["/photos/2026", "/photos/2025"])
-    assert executor.default_rejected_root(db) == os.path.abspath(
-        os.path.join("/photos/2026", os.pardir, "_photo_picker_rejected")
-    )
+    assert executor.default_rejected_root(db) == ""
 
 
 def test_default_rejected_root_without_source_dirs(db):
-    root = executor.default_rejected_root(db)
-    assert root == os.path.abspath(os.path.join("data", "_photo_picker_rejected"))
-    assert os.path.isabs(root)
+    assert executor.default_rejected_root(db) == ""
 
 
 def test_default_rejected_root_prefers_explicit_setting(db):
@@ -101,6 +99,55 @@ def test_default_rejected_root_prefers_explicit_setting(db):
     assert executor.default_rejected_root(db) == os.path.abspath(
         "/tmp/custom_rejected"
     )
+
+
+def test_rejected_dir_for_scatters_per_source_dir(db):
+    update_settings(db, source_dirs=["/photos/2026", "/photos/2025"])
+    assert executor.rejected_dir_for(db, "/photos/2026/trip/a.jpg") == os.path.abspath(
+        "/photos/2026/_photo_picker_rejected"
+    )
+    assert executor.rejected_dir_for(db, "/photos/2025/x/b.jpg") == os.path.abspath(
+        "/photos/2025/_photo_picker_rejected"
+    )
+    # outside every source dir -> cwd/data fallback
+    assert executor.rejected_dir_for(db, "/elsewhere/c.jpg") == os.path.abspath(
+        os.path.join("data", "_photo_picker_rejected")
+    )
+
+
+def test_rejected_dir_for_explicit_setting_is_central(db):
+    update_settings(
+        db, source_dirs=["/photos/2026", "/photos/2025"],
+        rejected_root="/tmp/custom_rejected",
+    )
+    for src in ("/photos/2026/a.jpg", "/photos/2025/b.jpg"):
+        assert executor.rejected_dir_for(db, src) == os.path.abspath(
+            "/tmp/custom_rejected"
+        )
+
+
+def test_apply_decision_scatters_rejects_into_own_source(db, tmp_path):
+    # Two sources, one photo in each: rejected copies must land in their
+    # OWN source's _photo_picker_rejected — never mixed into the other.
+    src_a = tmp_path / "srcA"
+    src_b = tmp_path / "srcB"
+    src_a.mkdir()
+    src_b.mkdir()
+    update_settings(db, source_dirs=[str(src_a), str(src_b)], rejected_root="")
+
+    gid_a, photos_a = mk_group(db, src_a, [["IMG_1.JPG"], ["IMG_2.JPG"]])
+    gid_b, photos_b = mk_group(db, src_b, [["IMG_1.JPG"], ["IMG_2.JPG"]])
+
+    executor.apply_decision(db, gid_a, keep_photo_ids=[photos_a[0]])
+    executor.apply_decision(db, gid_b, keep_photo_ids=[photos_b[0]])
+
+    assert (src_a / "_photo_picker_rejected" / "IMG_2.JPG").exists()
+    assert (src_b / "_photo_picker_rejected" / "IMG_2.JPG").exists()
+    # each folder holds ONLY its own rejects
+    assert sorted(p.name for p in (src_a / "_photo_picker_rejected").iterdir()) == ["IMG_2.JPG"]
+    assert sorted(p.name for p in (src_b / "_photo_picker_rejected").iterdir()) == ["IMG_2.JPG"]
+    # no centralized folder appeared anywhere
+    assert not (tmp_path / "_photo_picker_rejected").exists()
 
 
 # --- apply_decision --------------------------------------------------------
