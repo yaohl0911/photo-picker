@@ -830,10 +830,32 @@ a { color: var(--accent); text-decoration: none; }
   gap: 14px;
   color: var(--text-2);
   font-size: 13px;
+  flex-wrap: wrap;
 }
 
 .pager__info { font-variant-numeric: tabular-nums; }
 .btn--pager { padding: 6px 14px; font-size: 13px; }
+.pager__page-size {
+  padding: 5px 8px;
+  font-size: 13px;
+  color: var(--text-1);
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+}
+.pager__jump { display: inline-flex; align-items: center; gap: 6px; }
+.pager__jump-input {
+  width: 64px;
+  padding: 5px 8px;
+  font-size: 13px;
+  text-align: center;
+  color: var(--text-1);
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+}
+.pager__jump-input::-webkit-outer-spin-button,
+.pager__jump-input::-webkit-inner-spin-button { margin: 0; }
 .btn--sm { padding: 4.5px 11px; font-size: 12.5px; }
 
 .btn--ghost { border-color: transparent; background: transparent; color: var(--text-2); }

@@ -8,7 +8,8 @@
 import { getOverview, listGroups, thumbUrl } from '../api.js';
 import { toast, fmtNumber } from '../util.js';
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 50;
 
 const STATUSES = [
   { key: 'pending', label: '待决策' },
@@ -43,7 +44,10 @@ export function renderOverview(container) {
   const pagerEl = $('[data-testid="pager"]');
   const stripEl = $('[data-testid="stat-strip"]');
 
-  const state = { status: 'pending', offset: 0, total: 0 };
+  const state = {
+  status: 'pending', offset: 0, total: 0,
+  pageSize: DEFAULT_PAGE_SIZE, // 每页展示组数（可选）
+};
   let disposed = false;
 
   /* ---------- 统计条 ---------- */
@@ -216,7 +220,7 @@ export function renderOverview(container) {
       const data = await listGroups({
         status: state.status,
         offset: state.offset,
-        limit: PAGE_SIZE,
+        limit: state.pageSize,
       });
       if (disposed) return;
       state.total = data.total;
@@ -259,9 +263,21 @@ export function renderOverview(container) {
 
   /* ---------- 分页 ---------- */
 
+  function totalPages() {
+    return Math.max(1, Math.ceil(state.total / state.pageSize));
+  }
+
+  function gotoPage(page) {
+    const p = Math.min(Math.max(1, page), totalPages());
+    state.offset = (p - 1) * state.pageSize;
+    loadGroups();
+    scrollToTop();
+  }
+
   function renderPager() {
     const from = state.total === 0 ? 0 : state.offset + 1;
-    const to = Math.min(state.offset + PAGE_SIZE, state.total);
+    const to = Math.min(state.offset + state.pageSize, state.total);
+    const currentPage = Math.floor(state.offset / state.pageSize) + 1;
     pagerEl.replaceChildren();
 
     const prev = document.createElement('button');
@@ -271,7 +287,7 @@ export function renderOverview(container) {
     prev.disabled = state.offset <= 0;
     prev.addEventListener('click', () => {
       if (state.offset <= 0) return;
-      state.offset = Math.max(0, state.offset - PAGE_SIZE);
+      state.offset = Math.max(0, state.offset - state.pageSize);
       loadGroups();
       scrollToTop();
     });
@@ -288,12 +304,63 @@ export function renderOverview(container) {
     next.disabled = to >= state.total;
     next.addEventListener('click', () => {
       if (to >= state.total) return;
-      state.offset += PAGE_SIZE;
+      state.offset += state.pageSize;
       loadGroups();
       scrollToTop();
     });
 
-    pagerEl.append(prev, info, next);
+    // 每页展示组数：切换后回到第 1 页
+    const sizeSel = document.createElement('select');
+    sizeSel.className = 'pager__page-size';
+    sizeSel.dataset.testid = 'page-size';
+    sizeSel.setAttribute('aria-label', '每页展示组数');
+    for (const n of PAGE_SIZE_OPTIONS) {
+      const opt = document.createElement('option');
+      opt.value = String(n);
+      opt.textContent = `每页 ${n} 组`;
+      if (n === state.pageSize) opt.selected = true;
+      sizeSel.appendChild(opt);
+    }
+    sizeSel.addEventListener('change', () => {
+      const n = Number(sizeSel.value) || DEFAULT_PAGE_SIZE;
+      if (n === state.pageSize) return;
+      state.pageSize = n;
+      state.offset = 0;
+      loadGroups();
+      scrollToTop();
+    });
+
+    // 直接跳转到第几页
+    const jump = document.createElement('span');
+    jump.className = 'pager__jump';
+    const jumpInput = document.createElement('input');
+    jumpInput.type = 'number';
+    jumpInput.className = 'pager__jump-input';
+    jumpInput.dataset.testid = 'jump-page';
+    jumpInput.min = '1';
+    jumpInput.max = String(totalPages());
+    jumpInput.value = String(currentPage);
+    jumpInput.setAttribute('aria-label', '跳转到页码');
+    const jumpBtn = document.createElement('button');
+    jumpBtn.type = 'button';
+    jumpBtn.className = 'btn btn--pager';
+    jumpBtn.dataset.testid = 'jump-btn';
+    jumpBtn.textContent = '跳转';
+    const doJump = () => {
+      const p = parseInt(jumpInput.value, 10);
+      if (!Number.isFinite(p)) return;
+      gotoPage(p);
+    };
+    jumpBtn.addEventListener('click', doJump);
+    jumpInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        doJump();
+      }
+    });
+    jump.append(jumpInput, jumpBtn);
+
+    pagerEl.append(sizeSel, prev, info, next, jump);
   }
 
   function scrollToTop() {
