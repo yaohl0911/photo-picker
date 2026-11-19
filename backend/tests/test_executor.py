@@ -457,6 +457,38 @@ def test_undo_group_without_decision_is_noop(db, env):
     assert executor.undo_group(db, group_id) == 0
 
 
+def test_undo_dismiss_flips_group_back_to_pending(db, env):
+    from app.grouper import dismiss_group
+
+    group_id, _ = mk_group(db, env["src_root"], [["a/IMG_1.JPG"]])
+    dismiss_group(db, group_id)
+    assert db.execute(
+        "SELECT status FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()["status"] == "not_duplicate"
+
+    restored = executor.undo_group(db, group_id)
+
+    assert restored == 0  # nothing was moved
+    assert db.execute(
+        "SELECT status FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()["status"] == "pending"
+
+
+def test_undo_legacy_dismiss_without_decision_row_still_works(db, env):
+    # dismissals made before decision rows existed left no trace — undo
+    # must still flip a not_duplicate group back to pending
+    group_id, _ = mk_group(db, env["src_root"], [["a/IMG_1.JPG"]])
+    db.execute(
+        "UPDATE groups SET status = 'not_duplicate' WHERE id = ?", (group_id,)
+    )
+    db.commit()
+
+    assert executor.undo_group(db, group_id) == 0
+    assert db.execute(
+        "SELECT status FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()["status"] == "pending"
+
+
 def test_undo_group_suffixes_when_source_occupied(db, env):
     group_id, photo_ids = mk_group(
         db, env["src_root"], [["a/IMG_1.JPG"], ["a/IMG_2.JPG"]]

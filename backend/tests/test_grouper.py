@@ -233,6 +233,17 @@ def test_dismiss_group_marks_not_duplicate_and_survives_rebuild(db):
     # photos keep their group_id (history stays queryable)
     gids = {r["group_id"] for r in db.execute("SELECT group_id FROM photos")}
     assert gids == {gid}
+    # the dismissal records a decision row (kept NULL) so undo can revert it
+    dec = db.execute(
+        "SELECT kept_photo_ids FROM decisions WHERE group_id = ?", (gid,)
+    ).fetchone()
+    assert dec is not None and dec["kept_photo_ids"] is None
+    # re-dismissing must not stack duplicate decision rows
+    grouper.dismiss_group(db, gid)
+    n = db.execute(
+        "SELECT COUNT(*) FROM decisions WHERE group_id = ?", (gid,)
+    ).fetchone()[0]
+    assert n == 1
     # a rebuild must not resurrect it as pending nor regroup the photos
     res = grouper.build_groups(db)
     assert res == {"groups": 0, "pairs": 0}

@@ -169,7 +169,9 @@ export function renderHistory(container) {
     const kept = document.createElement('span');
     kept.className = 'history-row__kept';
     kept.dataset.testid = 'history-kept';
-    kept.textContent = `保留 ${(d.kept_photo_ids || []).length} 张`;
+    kept.textContent = d.kind === 'dismiss'
+      ? '判定非重复'
+      : `保留 ${(d.kept_photo_ids || []).length} 张`;
 
     const time = document.createElement('span');
     time.className = 'history-row__time';
@@ -253,7 +255,10 @@ export function renderHistory(container) {
       const group = await getGroup(d.group_id);
       if (disposed || !holder.isConnected) return;
       const keptIds = new Set(d.kept_photo_ids || []);
-      const photos = (group.photos || []).filter((p) => keptIds.has(p.photo_id));
+      // dismiss 决策没有保留集——展示整组照片帮用户回忆当时为何判非重复
+      const photos = d.kind === 'dismiss'
+        ? (group.photos || [])
+        : (group.photos || []).filter((p) => keptIds.has(p.photo_id));
       holder.replaceChildren();
       if (!photos.length) {
         holder.className += ' history-thumbs--empty';
@@ -275,7 +280,9 @@ export function renderHistory(container) {
       const movedNote = Array.isArray(d.moved_files)
         ? d.moved_files.length
         : Number(d.moved_files) || 0;
-      note.textContent = `保留 ${photos.length} 张 · 已移 ${movedNote} 个文件`;
+      note.textContent = d.kind === 'dismiss'
+        ? `非重复 · 组内 ${photos.length} 张照片`
+        : `保留 ${photos.length} 张 · 已移 ${movedNote} 个文件`;
       holder.appendChild(note);
     } catch (err) {
       if (disposed || !holder.isConnected) return;

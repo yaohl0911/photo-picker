@@ -277,9 +277,24 @@ def dismiss_group(conn: sqlite3.Connection, group_id: int) -> None:
 
     The group row and its photos' group_id are kept — the dismissal stays
     queryable as history and protects the photos from being regrouped by
-    later build_groups runs.
+    later build_groups runs. A decision row with kept_photo_ids NULL is
+    recorded (idempotently) so the dismissal is undoable like any other
+    decision: undo_group flips the group back to pending.
     """
-    conn.execute(
-        "UPDATE groups SET status = 'not_duplicate' WHERE id = ?", (group_id,)
-    )
+    status = conn.execute(
+        "SELECT status FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()
+    if status is None:
+        return
+    if status["status"] != "not_duplicate":
+        conn.execute(
+            "UPDATE groups SET status = 'not_duplicate' WHERE id = ?", (group_id,)
+        )
+        from datetime import datetime
+
+        conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at)"
+            " VALUES (?, NULL, ?)",
+            (group_id, datetime.now().isoformat(timespec="seconds")),
+        )
     conn.commit()

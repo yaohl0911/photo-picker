@@ -453,14 +453,17 @@ def list_history(conn, offset=0, limit=50):
     ).fetchall()
     decisions = []
     for r in rows:
+        raw_kept = r["kept_photo_ids"]
         try:
-            kept = json.loads(r["kept_photo_ids"])
+            kept = json.loads(raw_kept)
         except (TypeError, ValueError):
             kept = []
         decisions.append({
             "decision_id": r["decision_id"],
             "group_id": r["group_id"],
             "group_status": r["group_status"],
+            # NULL kept ids = a 'not duplicate' dismissal (nothing kept)
+            "kind": "dismiss" if raw_kept is None else "keep",
             "kept_photo_ids": kept,
             "decided_at": r["decided_at"],
             "applied_at": r["applied_at"],

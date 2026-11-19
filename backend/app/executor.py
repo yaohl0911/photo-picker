@@ -155,6 +155,9 @@ def undo_group(conn: sqlite3.Connection, group_id: int) -> int:
     its original path, in reverse order, without overwriting anything
     that reappeared there in the meantime (a ``_1`` suffix is used
     instead). The group goes back to 'pending' so the user can re-decide.
+    Dismissals record a decision with NULL kept_photo_ids: undoing one
+    simply flips the group back to pending. Legacy groups dismissed
+    before decision rows existed fall back to the same flip.
     Returns 0 when the group has no decision yet.
     """
     decision = conn.execute(
@@ -162,6 +165,15 @@ def undo_group(conn: sqlite3.Connection, group_id: int) -> int:
         (group_id,),
     ).fetchone()
     if decision is None:
+        # legacy dismissal (no decision row): still honor the undo
+        status = conn.execute(
+            "SELECT status FROM groups WHERE id = ?", (group_id,)
+        ).fetchone()
+        if status is not None and status["status"] == "not_duplicate":
+            conn.execute(
+                "UPDATE groups SET status = 'pending' WHERE id = ?", (group_id,)
+            )
+            conn.commit()
         return 0
     decision_id = decision["id"]
 
