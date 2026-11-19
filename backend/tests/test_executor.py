@@ -512,3 +512,41 @@ def test_undo_group_suffixes_when_source_occupied(db, env):
     assert db.execute(
         "SELECT path FROM files WHERE photo_id = ?", (photo_ids[1],)
     ).fetchone()["path"] == str(back)
+
+
+def test_apply_decision_zero_keep_rejects_whole_group(db, env):
+    # 保留 0 张：整组淘汰（全部文件进淘汰目录），可撤销
+    group_id, photo_ids = mk_group(
+        db,
+        env["src_root"],
+        [["a/IMG_1.JPG"], ["a/IMG_2.CR3", "a/IMG_2.JPG"]],
+    )
+
+    decision_id = executor.apply_decision(db, group_id, [], learn=True)
+
+    assert isinstance(decision_id, int)
+    # every file of every photo moved
+    for rel in ("a/IMG_1.JPG", "a/IMG_2.CR3", "a/IMG_2.JPG"):
+        assert not (env["src_root"] / rel).exists()
+        assert (env["rejected_root"] / rel).exists()
+    # decision row records the empty keep list; group is decided
+    kept_json = db.execute(
+        "SELECT kept_photo_ids FROM decisions WHERE id = ?", (decision_id,)
+    ).fetchone()["kept_photo_ids"]
+    assert json.loads(kept_json) == []
+    assert db.execute(
+        "SELECT status FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()["status"] == "decided"
+    # no kept photo → no preference pairs recorded
+    n = db.execute(
+        "SELECT COUNT(*) FROM preference_samples"
+    ).fetchone()[0]
+    assert n == 0
+    # undo brings everything back
+    restored = executor.undo_group(db, group_id)
+    assert restored == 3
+    for rel in ("a/IMG_1.JPG", "a/IMG_2.CR3", "a/IMG_2.JPG"):
+        assert (env["src_root"] / rel).exists()
+    assert db.execute(
+        "SELECT status FROM groups WHERE id = ?", (group_id,)
+    ).fetchone()["status"] == "pending"

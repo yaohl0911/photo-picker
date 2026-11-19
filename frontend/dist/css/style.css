@@ -300,6 +300,19 @@ a { color: var(--accent); text-decoration: none; }
 
 .btn--primary:active:not(:disabled) { background: #17469c; }
 
+/* 整组淘汰二次确认激活态：红色警示用户下一步将执行 */
+.btn--danger {
+  background: #c0392b;
+  border-color: #c0392b;
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #a93226;
+  border-color: #a93226;
+}
+
 .btn.is-loading {
   pointer-events: none;
   color: var(--text-2);

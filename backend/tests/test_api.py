@@ -616,3 +616,29 @@ def test_run_full_pipeline_blocking_reports_all_five_stages(db, tmp_path):
         # (group may legitimately be 0/0 when nothing was hashed yet)
         assert all(0 <= e[1] <= e[2] and e[2] >= 0 for e in entries), (phase, entries)
         assert entries[-1][1] == entries[-1][2], (phase, entries[-1])
+
+
+def test_decide_group_zero_keep_rejects_whole_group(scene):
+    # 保留 0 张 = 整组淘汰：所有文件移动、组 decided、无偏好样本、
+    # recommended_photo_id 不被改写（无保留者）
+    conn = scene["conn"]
+    rejected = scene["rejected_root"]
+    before = conn.execute(
+        "SELECT recommended_photo_id FROM groups WHERE id=2"
+    ).fetchone()["recommended_photo_id"]
+
+    result = api.decide_group(conn, 2, [], learn=True)
+
+    assert result["moved_files"] == 2
+    assert result["model"]["sample_count"] == 0
+    row = conn.execute("SELECT status, recommended_photo_id FROM groups WHERE id=2").fetchone()
+    assert row["status"] == "decided"
+    assert row["recommended_photo_id"] == before  # 空保留集不写推荐
+    dec = conn.execute(
+        "SELECT kept_photo_ids FROM decisions WHERE group_id=2"
+    ).fetchone()
+    assert json.loads(dec["kept_photo_ids"]) == []
+    # both photos of group 2 physically moved
+    for p in scene["paths"].values():
+        if "IMG_4" in str(p) or "IMG_5" in str(p):
+            assert not p.exists()
