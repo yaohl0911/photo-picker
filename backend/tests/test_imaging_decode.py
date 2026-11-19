@@ -138,6 +138,52 @@ def test_decode_raw_fallback_to_embedded_preview(tmp_path, monkeypatch):
     assert img.size == (32, 32)
 
 
+def test_decode_raw_pil_fallback_for_dng_as_jpeg_container(
+    tmp_path, monkeypatch
+):
+    # Huawei "RAW" exports are .DNG files that are actually JPEG/MPO
+    # containers: LibRaw rejects them ("Unsupported file format") but
+    # PIL opens them directly. The PIL fallback must run BEFORE the
+    # embedded-preview path (which also needs rawpy and would fail).
+    raw = _FakeRaw(
+        postprocess_exc=RuntimeError("Unsupported file format"),
+        thumb_exc=RuntimeError("no thumb either"),
+    )
+    _install_fake_rawpy(monkeypatch, raw)
+    p = tmp_path / "10270576547238261903.DNG"
+    _write_jpeg(p, (64, 48), color=(20, 120, 200))
+
+    img = imaging.decode(str(p), max_side=64)
+
+    assert isinstance(img, Image.Image)
+    assert img.mode == "RGB"
+    assert img.size == (64, 48)
+
+
+def test_decode_png_with_broken_chunk_crc_falls_back_to_cv2(tmp_path):
+    # Real-world Huawei screenshots carry an eXIf chunk whose CRC is
+    # invalid: Pillow rejects the whole file, libpng (cv2) just warns.
+    p = tmp_path / "huawei_screenshot.png"
+    Image.new("RGB", (40, 30), (10, 200, 90)).save(
+        p, format="PNG", exif=b"Exif\x00\x00II*\x00\x08\x00\x00\x00\x00\x00"
+    )
+    data = bytearray(p.read_bytes())
+    i = data.find(b"eXIf")
+    assert i > 0, "expected an eXIf chunk to corrupt"
+    import struct
+
+    length = struct.unpack(">I", data[i - 4 : i])[0]
+    crc_pos = i + 4 + length
+    data[crc_pos] ^= 0xFF  # break the CRC
+    p.write_bytes(bytes(data))
+
+    img = imaging.decode(str(p), max_side=64)
+
+    assert isinstance(img, Image.Image)
+    assert img.mode == "RGB"
+    assert img.size == (40, 30)
+
+
 def test_raw_embedded_preview_bitmap_thumb(monkeypatch, tmp_path):
     import numpy as np
 

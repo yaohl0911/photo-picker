@@ -95,17 +95,50 @@ def _register_heif_opener() -> None:
 
 
 def _open_with_pil(path):
-    """Open a JPG/PNG/HEIC file with PIL, loading pixel data eagerly."""
+    """Open a JPG/PNG/HEIC file with PIL, loading pixel data eagerly.
+
+    PIL failing (UnidentifiedImageError, SyntaxError...) falls back to
+    cv2.imread: libpng tolerates chunk CRC errors that Pillow rejects,
+    which real-world exports (e.g. Huawei screenshots) do contain.
+    """
     from PIL import Image  # deferred: native extension
 
     _register_heif_opener()
-    img = Image.open(path)
-    img.load()  # force decode now so corrupt data raises in this frame
-    return img
+    try:
+        img = Image.open(path)
+        img.load()  # force decode now so corrupt data raises in this frame
+        return img
+    except Exception:
+        cv2_img = _decode_with_cv2(path)
+        if cv2_img is not None:
+            return cv2_img
+        raise
+
+
+def _decode_with_cv2(path):
+    """Best-effort cv2 decode; None when cv2 is unavailable or fails."""
+    try:
+        import cv2  # deferred: native extension
+    except Exception:
+        return None
+    import numpy  # cv2 arrays need numpy for the RGB conversion
+
+    arr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if arr is None:
+        return None
+    from PIL import Image  # deferred: native extension
+
+    return Image.fromarray(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB))
 
 
 def _decode_raw(path):
-    """Decode a RAW file via rawpy, falling back to the embedded preview."""
+    """Decode a RAW file via rawpy, with two fallbacks.
+
+    rawpy (LibRaw) covers real RAW sensor data. Some phones export
+    ".DNG" files that are actually JPEG/MPO multi-frame containers
+    (Huawei "RAW" mode): PIL opens those directly. The last resort is
+    the embedded preview of a genuine RAW file.
+    """
     import rawpy  # deferred: native extension
     from PIL import Image  # deferred: native extension
 
@@ -113,6 +146,13 @@ def _decode_raw(path):
         with rawpy.imread(str(path)) as raw:
             rgb = raw.postprocess(use_camera_wb=True, half_size=True)
     except Exception:
+        # DNG-as-MPO/JPEG container (LibRaw rejects it, PIL reads it)
+        try:
+            img = Image.open(path)
+            img.load()
+            return img
+        except Exception:
+            pass
         return raw_embedded_preview(path)
     return Image.fromarray(rgb)
 
