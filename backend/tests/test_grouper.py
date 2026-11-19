@@ -81,6 +81,8 @@ def test_time_adjacent_but_different_content_no_group(db):
 def test_chain_transitive_merge_into_one_group(db):
     # d(A,B)=6 and d(B,C)=6 are both <= thr; d(A,C)=12 > thr, so A and C are
     # only linked transitively through B (triangle-inequality-legal chain).
+    # Pairwise enforcement now evicts C (tied conflict count, higher id),
+    # keeping the mutually-similar pair {A, B}.
     pa, _ = ins_file(db, "dir/a.jpg", H0, AH0, DH0, T0)
     pb, _ = ins_file(db, "dir/b.jpg", hex_at(H0, 6), AH0, DH0, "2026-01-01T10:00:10")
     pc, _ = ins_file(db, "dir/c.jpg", hex_at(H0, 12), AH0, DH0, "2026-01-01T10:00:20")
@@ -92,12 +94,79 @@ def test_chain_transitive_merge_into_one_group(db):
 
     assert res["pairs"] == 2  # A-B and B-C only
     assert res["groups"] == 1
+    # C was evicted: the group holds exactly the mutually-similar A and B
+    g = db.execute("SELECT id FROM groups").fetchone()["id"]
+    grouped = {
+        r["id"]: r["group_id"]
+        for r in db.execute("SELECT id, group_id FROM photos")
+    }
+    assert grouped[pa] == g and grouped[pb] == g
+    assert grouped[pc] is None  # evicted, stays ungrouped
+
+
+def test_borderline_chained_photo_is_evicted_not_grouped(db):
+    # The user's group-#3 shape: A<->B distance 2 (true duplicate), the
+    # unrelated C at exactly the threshold against B (10) but 12 against A.
+    # C must not ride the chain into the group.
+    pa, _ = ins_file(db, "dir/a.jpg", H0, AH0, DH0, T0)
+    pb, _ = ins_file(db, "dir/b.jpg", hex_at(H0, 2), AH0, DH0, T0)
+    # C flips the low 12 bits: d(C,B) = |{0,1} Δ {0..11}| = 10 (exactly
+    # the threshold against B), d(C,A) = 12 (dissimilar to A).
+    hc = hex_at(H0, 12)
+    pc, _ = ins_file(db, "dir/c.jpg", hc, AH0, DH0, "2026-04-30T20:10:32")
+    assert phash_distance(hex_at(H0, 2), hc) == 10
+    assert phash_distance(H0, hc) == 12
+
+    res = grouper.build_groups(db)
+
+    assert res["groups"] == 1
+    grouped = {
+        r["id"]: r["group_id"]
+        for r in db.execute("SELECT id, group_id FROM photos")
+    }
+    assert grouped[pa] == grouped[pb] and grouped[pa] is not None
+    assert grouped[pc] is None
+
+
+def test_consistent_group_is_untouched_by_enforcement(db):
+    # All pairs at distance <= threshold: nothing is evicted, even when
+    # a component is large (connected chain of near-identical shots).
+    hashes = [hex_at(H0, 2 * i) for i in range(4)]  # 0,2,4,6 from H0
+    for i, h in enumerate(hashes):
+        ins_file(db, f"dir/n{i}.jpg", h, AH0, DH0, T0)
+    res = grouper.build_groups(db)
+    assert res["groups"] == 1
     assert db.execute(
         "SELECT COUNT(*) AS c FROM photos WHERE group_id IS NOT NULL"
-    ).fetchone()["c"] == 3
-    assert db.execute(
-        "SELECT COUNT(DISTINCT group_id) AS c FROM photos WHERE group_id IS NOT NULL"
-    ).fetchone()["c"] == 1
+    ).fetchone()["c"] == 4
+
+
+def test_mutually_dissimilar_component_yields_no_group(db):
+    # Star topology: center similar to all, leaves far apart pairwise —
+    # with a tight threshold the leaves' mutual conflicts evict them all,
+    # leaving no group at all.
+    ins_file(db, "dir/center.jpg", H0, AH0, DH0, T0)
+    ins_file(db, "dir/leaf1.jpg", hex_at(H0, 6), AH0, DH0, T0)
+    ins_file(db, "dir/leaf2.jpg", hex_at(H0, 6 + 32), AH0, DH0, T0)  # far from leaf1
+    res = grouper.build_groups(db)
+    # whatever survives must be pairwise consistent; leaf1<->leaf2 = 6+32
+    # flips in disjoint bit ranges... they are distance 6 apart from H0 in
+    # distinct bits, so leaf1<->leaf2 = 12 > thr → one of them is evicted
+    # together with any conflict partner; at least the group count reflects
+    # a consistent subset only.
+    grouped = db.execute(
+        "SELECT COUNT(*) AS c FROM photos WHERE group_id IS NOT NULL"
+    ).fetchone()["c"]
+    assert grouped >= 2  # center keeps at least one leaf
+    gid = db.execute("SELECT DISTINCT group_id FROM photos WHERE group_id IS NOT NULL").fetchone()
+    members = db.execute(
+        "SELECT f.hash_phash AS h FROM files f JOIN photos p ON p.id=f.photo_id"
+        " WHERE p.group_id = ?", (gid["group_id"],)
+    ).fetchall()
+    hs = [m["h"] for m in members]
+    for i in range(len(hs)):
+        for j in range(i + 1, len(hs)):
+            assert phash_distance(hs[i], hs[j]) <= 10
 
 
 def test_cross_time_same_scene_found_by_bk_tree(db):

@@ -21,6 +21,13 @@ Pipeline per docs/superpowers/specs/2026-11-18-photo-dedup-design.md §5:
    similar pair.
 4. Union-find merges the photo ids of similar pairs; every component
    with >= 2 photos becomes a new groups row (status 'pending').
+5. Pairwise-consistency enforcement: transitive merging can drag in a
+   photo that is NOT similar to everything else in the group (chained
+   through one borderline pair). Each component is trimmed so that the
+   remaining photos are pairwise within ``phash_threshold`` (photo
+   distance = min over their file pairs); the photo fighting the most
+   others is evicted greedily until the group is consistent. Evicted
+   photos stay ungrouped and re-enter the next rebuild.
 """
 
 import sqlite3
@@ -202,6 +209,46 @@ def _collect_bk_pairs(files, threshold, progress_cb, pairs):
             progress_cb("group", done, total)
 
 
+def _enforce_pairwise_consistency(members, photo_hashes, threshold):
+    """Trim a merged component so all remaining photos are pairwise similar.
+
+    Union-find is transitive, so a photo chained in through one borderline
+    pair may be dissimilar to the rest of the group (the group-#3 case:
+    two true duplicates at distance 2 plus an unrelated 2020 shot that
+    hit the threshold against one of them). The photo in conflict with
+    the most others is evicted greedily (ties break to the higher photo
+    id, deterministically) until no pair exceeds ``threshold``.
+
+    Photo distance is the MIN over their file pairs: a photo with a RAW
+    and a JPG is judged by its most similar representative, matching how
+    candidate pairs were scored. Returns the kept member set; evicted
+    photos simply stay ungrouped.
+    """
+    active = set(members)
+
+    def _photo_distance(pa, pb):
+        return min(
+            phash_distance(ha, hb)
+            for ha in photo_hashes.get(pa, [""])
+            for hb in photo_hashes.get(pb, [""])
+        )
+
+    while len(active) >= 2:
+        conflicts = {pid: 0 for pid in active}
+        order = sorted(active)
+        for i, pa in enumerate(order):
+            for pb in order[i + 1:]:
+                if _photo_distance(pa, pb) > threshold:
+                    conflicts[pa] += 1
+                    conflicts[pb] += 1
+        worst = max(conflicts.values())
+        if worst == 0:
+            return active
+        evicted = max((p for p in active if conflicts[p] == worst), key=lambda p: p)
+        active.discard(evicted)
+    return active
+
+
 def build_groups(conn: sqlite3.Connection, progress_cb=None) -> dict:
     """(Re)build all pending duplicate groups.
 
@@ -252,9 +299,16 @@ def build_groups(conn: sqlite3.Connection, progress_cb=None) -> dict:
     for f in files:
         root = uf.find(f["photo_id"])
         components.setdefault(root, set()).add(f["photo_id"])
+    # Photo -> hashes of its files, for pairwise-consistency enforcement.
+    photo_hashes = {}
+    for f in files:
+        photo_hashes.setdefault(f["photo_id"], []).append(f["hash_phash"])
     created = 0
     now = datetime.now().isoformat()
     for members in components.values():
+        if len(members) < 2:
+            continue
+        members = _enforce_pairwise_consistency(members, photo_hashes, threshold)
         if len(members) < 2:
             continue
         cur = conn.execute(
