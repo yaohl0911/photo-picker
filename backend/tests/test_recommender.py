@@ -358,3 +358,73 @@ def test_single_photo_group_recommends_without_comparison(db):
     assert result["ranked"][0]["total"] == pytest.approx(86.0)
     assert result["reason"]  # some sensible single-photo reason
     assert " vs " not in result["reason"]
+
+
+def test_copy_suffix_detection_patterns():
+    from app.recommender import _is_copy_suffix
+
+    yes = [
+        "/lib/2020-05-10 132126(1).jpg",   # 用户实例：紧凑副本后缀
+        "/lib/2020-05-10 132126 (2).JPG",  # 空格+大写扩展名
+        "/lib/IMG_4471(10).jpg",            # 相机名+多位副本
+        "C:\\pics\\photo (3).png",           # Windows 路径
+        "/lib/a(1).heic",
+    ]
+    no = [
+        "/lib/2020-05-10 132126.jpg",       # 原件
+        "/lib/2019-05-13 103817.jpg",
+        "/lib/photo(1)x.jpg",               # (1) 不在尾部
+        "/lib/4554893058087652885.JPG",
+        None, "",                            # 空
+    ]
+    for p in yes:
+        assert _is_copy_suffix(p), p
+    for p in no:
+        assert not _is_copy_suffix(p), p
+
+
+def test_identical_photos_prefer_original_over_copy_suffix(db):
+    # 完全相同的照片（同分同 regularity）：无 (1) 后缀的原件优先
+    mk_group(db, 910)
+    mk_photo(db, 1, group_id=910, path="/lib/2020-05-10 132126.jpg",
+             captured_at="2020-05-10T13:21:26", camera="iPhone",
+             sharpness=80, exposure=75)
+    mk_photo(db, 2, group_id=910, path="/lib/2020-05-10 132126(1).jpg",
+             captured_at="2020-05-10T13:21:26", camera="iPhone",
+             sharpness=80, exposure=75)
+
+    res = recommend_group(db, 910)
+
+    assert res["recommended_photo_id"] == 1  # 原件
+    assert "副本" in res["reason"]
+    ranked_ids = [r["photo_id"] for r in res["ranked"]]
+    assert ranked_ids == [1, 2]
+    by_id = {r["photo_id"]: r for r in res["ranked"]}
+    assert by_id[1]["copy_penalty"] == 0.0
+    assert by_id[2]["copy_penalty"] == 1.0
+
+
+def test_copy_penalty_does_not_flip_real_quality_gap(db):
+    # 质量 92 的副本 vs 87 的原件：差 5 ≥ 3，质量优先（惩罚不翻转）
+    mk_group(db, 911)
+    mk_photo(db, 1, group_id=911, path="/lib/good original.jpg",
+             sharpness=87, exposure=87)
+    mk_photo(db, 2, group_id=911, path="/lib/great copy(1).jpg",
+             sharpness=92, exposure=92)
+
+    res = recommend_group(db, 911)
+
+    assert res["recommended_photo_id"] == 2
+    assert "副本" not in res["reason"]
+
+
+def test_all_copies_ranked_by_quality_untouched(db):
+    # 组内全是副本（原件缺失）：等额惩罚，质量排序不受影响
+    mk_group(db, 912)
+    mk_photo(db, 1, group_id=912, path="/lib/shot(1).jpg", sharpness=85)
+    mk_photo(db, 2, group_id=912, path="/lib/shot(2).jpg", sharpness=90)
+
+    res = recommend_group(db, 912)
+
+    assert res["recommended_photo_id"] == 2
+    assert "副本" not in res["reason"]  # 推荐者本身也是副本，不提示原件优势

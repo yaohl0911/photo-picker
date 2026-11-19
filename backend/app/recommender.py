@@ -51,6 +51,9 @@ MAX_REASON_DIMS = 2
 EXIF_BONUS = 1.2          # camera + capture time present
 EXIF_TIME_ONLY_BONUS = 0.6  # capture time present, camera missing
 FILENAME_BONUS = 1.0      # regular, sortable filename (see below)
+#: File-manager copy suffix (photo(1).jpg / photo (2).JPG): the no-suffix
+#: file is the original; copies are re-saves from chats/downloads.
+COPY_SUFFIX_PENALTY = 1.0
 
 import re
 
@@ -62,6 +65,8 @@ _SEQISH = re.compile(
 _LONGNUM = re.compile(r"^\d{12,}$")        # 4554893058087652885
 _HEXJUNK = re.compile(r"^[0-9a-fA-F]{16,}$")  # content hashes
 _MMEXPORT = re.compile(r"^mmexport\d+$", re.I)   # WeChat dumps
+#: trailing "(n)" on the stem, optional leading space: 132126(1) / 132126 (2)
+_COPY_SUFFIX = re.compile(r"\s?\(\d+\)$")
 
 
 def _filename_regularity(path):
@@ -88,23 +93,42 @@ def _filename_regularity(path):
     return 0.3
 
 
+def _is_copy_suffix(path):
+    """True when the stem ends in a file-manager copy marker ``(n)``.
+
+    ``photo(1).jpg`` / ``132126 (2).JPG`` are re-saved copies; the sibling
+    without the suffix is the original.
+    """
+    if not path:
+        return False
+    stem = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = stem.rsplit(".", 1)[0]
+    return bool(_COPY_SUFFIX.search(stem))
+
+
 def _management_bonuses(conn, primary_file_id):
-    """(exif_bonus, filename_bonus) for one photo's primary file."""
+    """(exif_bonus, filename_bonus, copy_penalty) for one photo's primary file.
+
+    filename_bonus stays regularity-based; the copy-suffix penalty is kept
+    separate so reasons can explain 'original vs copy' independently of
+    filename regularity.
+    """
     if primary_file_id is None:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     row = conn.execute(
         "SELECT path, captured_at, camera FROM files WHERE id = ?",
         (primary_file_id,),
     ).fetchone()
     if row is None:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
     if row["captured_at"] and row["camera"]:
         exif = EXIF_BONUS
     elif row["captured_at"]:
         exif = EXIF_TIME_ONLY_BONUS
     else:
         exif = 0.0
-    return exif, FILENAME_BONUS * _filename_regularity(row["path"])
+    copy_penalty = COPY_SUFFIX_PENALTY if _is_copy_suffix(row["path"]) else 0.0
+    return exif, FILENAME_BONUS * _filename_regularity(row["path"]), copy_penalty
 
 
 def _weight_of(weights, dim):
@@ -160,10 +184,11 @@ def rank_photos(conn, photo_ids, weights=None):
         no scored dimension at all (always sorted last). ``scores`` holds
         only the dimensions that have values. ``is_raw`` is True when the
         primary file's format column equals 'raw'. Small management-value
-        bonuses (EXIF presence, regular filename — see the constants above)
-        are added to a scored photo's total; they tip pixel-identical
-        near-ties toward the better-archived copy without ever overriding
-        a real quality gap.
+        bonuses (EXIF presence, regular filename, and a copy-suffix
+        penalty — see the constants above) are applied to a scored
+        photo's total; they tip pixel-identical near-ties toward the
+        better-archived original without ever overriding a real quality
+        gap.
     """
     entries = []
     for photo_id in photo_ids:
@@ -184,7 +209,7 @@ def rank_photos(conn, photo_ids, weights=None):
                 denominator += weight
             if denominator > 0:
                 total = numerator / denominator
-        exif_bonus, filename_bonus = _management_bonuses(
+        exif_bonus, filename_bonus, copy_penalty = _management_bonuses(
             conn, photo["primary_file_id"]
         )
         entries.append(
@@ -197,11 +222,13 @@ def rank_photos(conn, photo_ids, weights=None):
                 "group_id": photo["group_id"],
                 "exif_bonus": exif_bonus,
                 "filename_bonus": filename_bonus,
+                "copy_penalty": copy_penalty,
                 # sorting adds the small management bonuses to the quality
                 # total; the bonus never changes the displayed total itself
                 "bonus_total": (total if total is not None else 0.0)
                 + exif_bonus
-                + filename_bonus,
+                + filename_bonus
+                - copy_penalty,
             }
         )
 
@@ -297,8 +324,11 @@ def _build_reason(ranked):
     other_reg = other["filename_bonus"] / FILENAME_BONUS if FILENAME_BONUS else 0.0
     if rec_reg - other_reg >= 0.4 and rec_reg >= 0.9:
         filename_note = "文件名包含拍摄日期、按名排序即按时间排序，便于文件管理。"
+    copy_note = ""
+    if other["copy_penalty"] and not rec["copy_penalty"]:
+        copy_note = "另一张的文件名带 (1) 副本后缀（复制/另存产生的副本），这张是原始文件。"
 
-    management = raw_note + exif_note + filename_note
+    management = raw_note + exif_note + filename_note + copy_note
 
     advantages = []
     for dim in DIMENSIONS:
