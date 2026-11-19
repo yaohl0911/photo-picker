@@ -64,6 +64,15 @@ SUPPORTED: dict[str, str] = {
 
 _MD5_BLOCK_SIZE = 8192
 _PAIR_MAX_CAPTURE_GAP_SEC = 2.0
+# Same-stem pairs must ALSO be near in time: camera counters loop across
+# bodies (DSC01234.ARW from an old body + DSC01234.JPG from a new one
+# months later share a stem but are different photos). A real RAW+JPG
+# burst pair is seconds apart; anything tens of minutes apart with the
+# same stem is a counter collision, not a pair.
+_PAIR_STEM_MAX_CAPTURE_GAP_SEC = 600.0
+# phash distance beyond which two files are definitely different photos;
+# shared by same-stem pairing, time-proximity pairing and repair
+_PAIR_HASH_MAX_DISTANCE = 10  # same threshold as grouper similarity
 _PROGRESS_STEP = 50  # scan_runs.progress DB write every N files
 
 # EXIF tags extracted into files.exif_json (spec: 306/271/272/33434/33437/
@@ -537,6 +546,15 @@ def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], photo_raw_count=None
     stem = Path(raw_row["path"]).stem.lower()
     for jpg in candidates:  # rule 1: same directory + same basename stem
         if Path(jpg["path"]).stem.lower() == stem:
+            # a matching stem alone is not proof: enforce capture-time
+            # sanity, and the phash when both files carry one
+            gap = _capture_gap_seconds(raw_row, jpg)
+            if gap is not None and gap >= _PAIR_STEM_MAX_CAPTURE_GAP_SEC:
+                continue  # same stem, hours apart: counter collision
+            if conn is not None:
+                phash_gap = _phash_gap(conn, raw_row["id"], jpg["id"])
+                if phash_gap is not None and phash_gap > _PAIR_HASH_MAX_DISTANCE:
+                    continue  # hashes disagree: same stem, different photo
             return jpg
     timed = []  # rule 2: same directory + capture time < 2s apart
     for jpg in candidates:
@@ -544,7 +562,7 @@ def _find_jpg_partner(raw_row, jpg_rows, claimed: set[int], photo_raw_count=None
         if gap is not None and gap < _PAIR_MAX_CAPTURE_GAP_SEC:
             if conn is not None:
                 phash_gap = _phash_gap(conn, raw_row["id"], jpg["id"])
-                if phash_gap is not None and phash_gap > 10:
+                if phash_gap is not None and phash_gap > _PAIR_HASH_MAX_DISTANCE:
                     continue  # different photos: same-second is coincidence
             timed.append((gap, jpg["id"], jpg))
     if not timed:
@@ -629,7 +647,6 @@ def repair_overmerged_photos(conn: sqlite3.Connection) -> int:
     (no quality_scores) and regrouping on the next pipeline run.
     Returns the number of photos split.
     """
-    _PAIR_HASH_MAX_DISTANCE = 10  # same threshold as grouper similarity
     over = list(
         conn.execute(
             "SELECT photo_id, COUNT(*) AS n FROM files"

@@ -139,7 +139,7 @@ def apply_decision(
                 dst = _move_file(
                     conn, row["id"], row["path"], rejected_dir, decision_id
                 )
-                _move_sidecar_videos(conn, row["path"], dst, decision_id)
+                _move_sidecar_files(conn, row["path"], dst, decision_id)
             except MoveError as exc:
                 logger.warning("executor move failed: %s", exc)
                 _record_execute_error(conn, str(exc))
@@ -293,19 +293,41 @@ def _move_file(
     return dst
 
 
-# Video extensions treated as Live Photo companions of a rejected photo.
-# Videos are never indexed (scanner SUPPORTED is images-only); they only
-# ride along when their sibling photo is rejected, so a Live Photo never
-# gets split across two folders.
+# Extensions of companion files that ride along with a rejected photo:
+# Live Photo videos plus anything that is not an indexed image format
+# (.xmp edit sidecars, DJI .SRT subtitles, thumbnails...). A sibling file
+# with the same stem is never indexed as a photo itself, so keeping it
+# next to its photo prevents orphans. Indexed formats (scanner.SUPPORTED
+# — e.g. a same-stem PNG) are NOT sidecars: those are their own photos.
 VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".avi", ".mkv", ".webm"}
 
 
-def _find_sidecar_videos(src: str) -> list[str]:
-    """Same-stem video files sitting next to src (Live Photo companions).
+def _is_sidecar_ext(ext: str) -> bool:
+    """True for extensions that may ride along with a rejected photo.
 
-    The stem comparison is case-insensitive (iPhone exports IMG_1234.HEIC
-    with IMG_1234.MOV; some vendors lowercase one side). Returns sorted
-    paths; missing folder or permission issues yield an empty list.
+    Videos always qualify. For other extensions the rule is exclusion:
+    anything the scanner indexes as an image is its own photo, never a
+    sidecar; every other same-stem file (.xmp, .srt, .thm, .txt...) is
+    material that belongs to that photo and follows it. Hidden files
+    (.DS_Store and macOS AppleDouble ._IMG_1234.HEIC metadata twins have
+    a different stem) never match.
+    """
+    ext = ext.lower()
+    if ext in VIDEO_EXTS:
+        return True
+    from app import scanner  # local import: scanner is stdlib-only here
+
+    return ext not in scanner.SUPPORTED
+
+
+def _find_sidecar_files(src: str) -> list[str]:
+    """Same-stem companion files sitting next to src.
+
+    Live Photo videos (IMG_1234.HEIC + IMG_1234.MOV) and edit sidecars
+    (IMG_1234.ARW + IMG_1234.xmp) alike. The stem comparison is
+    case-insensitive (iPhone exports IMG_1234.HEIC with IMG_1234.MOV;
+    some vendors lowercase one side). Returns sorted paths; missing
+    folder or permission issues yield an empty list.
     """
     stem = os.path.splitext(os.path.basename(src))[0].lower()
     folder = os.path.dirname(src) or "."
@@ -316,25 +338,25 @@ def _find_sidecar_videos(src: str) -> list[str]:
     found = []
     for name in names:
         name_stem, name_ext = os.path.splitext(name)
-        if name_ext.lower() in VIDEO_EXTS and name_stem.lower() == stem:
+        if name_stem.lower() == stem and _is_sidecar_ext(name_ext):
             candidate = os.path.join(folder, name)
             if os.path.isfile(candidate):
                 found.append(candidate)
     return sorted(found)
 
 
-def _move_sidecar_videos(
+def _move_sidecar_files(
     conn: sqlite3.Connection, src: str, photo_dst: str, decision_id: int | None
 ) -> int:
-    """Move same-stem videos alongside a rejected photo; return the count.
+    """Move same-stem companion files alongside a rejected photo; return count.
 
-    Videos land in the same rejected subfolder as the photo (they are not
-    files-table rows, so their path is tracked in video_moves instead of
-    move_log). Failures are logged into scan_runs like photo move errors
-    and never abort the decision.
+    Companions land in the same rejected subfolder as the photo (they are
+    not files-table rows, so their path is tracked in video_moves — the
+    companion-moves ledger — instead of move_log). Failures are logged
+    into scan_runs like photo move errors and never abort the decision.
     """
     moved = 0
-    for video in _find_sidecar_videos(src):
+    for video in _find_sidecar_files(src):
         video_dst = _unique_dst(
             os.path.join(os.path.dirname(photo_dst), os.path.basename(video))
         )

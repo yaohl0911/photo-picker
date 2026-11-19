@@ -648,3 +648,79 @@ def test_undo_restores_videos_together_with_photos(db, env):
     assert db.execute(
         "SELECT undone FROM video_moves"
     ).fetchone()["undone"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Generalized sidecars: .xmp / .srt / any non-indexed same-stem file follows
+# ---------------------------------------------------------------------------
+
+def test_rejected_raw_takes_xmp_sidecar_with_it(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.ARW"], ["a/KEEPER.JPG"]]
+    )
+    xmp = env["src_root"] / "a" / "IMG_1.xmp"
+    xmp.write_bytes(b"<xmp>edit-history</xmp>")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert not xmp.exists()
+    moved_xmp = env["rejected_root"] / "a" / "IMG_1.xmp"
+    assert moved_xmp.exists()
+    assert moved_xmp.read_bytes() == b"<xmp>edit-history</xmp>"
+    # the ledger row keeps undo working for non-video sidecars too
+    row = db.execute("SELECT src_path FROM video_moves").fetchone()
+    assert row["src_path"] == str(xmp)
+
+
+def test_sidecar_video_and_xmp_move_together(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.HEIC"], ["a/KEEPER.JPG"]]
+    )
+    (env["src_root"] / "a" / "IMG_1.MOV").write_bytes(b"live")
+    (env["src_root"] / "a" / "IMG_1.xmp").write_bytes(b"edit")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert (env["rejected_root"] / "a" / "IMG_1.MOV").exists()
+    assert (env["rejected_root"] / "a" / "IMG_1.xmp").exists()
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 2
+
+
+def test_indexed_same_stem_file_is_not_a_sidecar(db, env):
+    # a same-stem PNG is an indexed photo in its own right: it must NOT
+    # ride along as a sidecar (it gets its own grouping decision)
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    png = env["src_root"] / "a" / "IMG_1.PNG"
+    png.write_bytes(b"png-photo")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert png.exists()  # untouched: not a companion, its own photo
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 0
+
+
+def test_hidden_appledouble_files_never_ride_along(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    (env["src_root"] / "a" / "._IMG_1.JPG").write_bytes(b"apple-double-meta")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert (env["src_root"] / "a" / "._IMG_1.JPG").exists()
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 0
+
+
+def test_dji_srt_subtitle_follows_rejected_photo(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/DJI_0123.JPG"], ["a/KEEPER.JPG"]]
+    )
+    srt = env["src_root"] / "a" / "DJI_0123.SRT"
+    srt.write_bytes(b"1\n00:00:01 --> 00:00:02\ncaption")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert (env["rejected_root"] / "a" / "DJI_0123.SRT").exists()
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 1

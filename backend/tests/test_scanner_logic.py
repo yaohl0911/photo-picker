@@ -504,3 +504,85 @@ def test_scan_commits_in_batches_to_keep_lock_windows_short(db, tmp_path):
     assert report.total_files == 150
     # 150 / 50 = 3 次批提交（另有收尾与 helper 内 settings 写入的 commit）
     assert len(commits) >= 3
+
+
+# --- same-stem pairing guards (counter collisions across camera bodies) ------
+
+def _unpair_all(db):
+    """Strip scan()'s built-in pairing so a test can drive pair_raw_jpg
+    with fully controlled captured_at / phash inputs. Rebuilds the
+    pre-pairing state scan() produces: one standalone photo per file."""
+    db.execute("UPDATE files SET photo_id = NULL")  # FK: detach first
+    db.execute("DELETE FROM photos")
+    for row in db.execute("SELECT id FROM files ORDER BY id").fetchall():
+        pid = db.execute(
+            "INSERT INTO photos (primary_file_id, group_id) VALUES (?, NULL)",
+            (row["id"],),
+        ).lastrowid
+        db.execute("UPDATE files SET photo_id = ? WHERE id = ?", (pid, row["id"]))
+    db.commit()
+
+
+def test_pair_same_stem_refuses_far_apart_capture_times(db, tmp_path):
+    # DSC01234.ARW from an old body + DSC01234.JPG shot months later by a
+    # new body: same stem, wildly different capture times -> NOT a pair
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "DSC01234.ARW", b"old-raw")
+    make_fake_file(src, "DSC01234.JPG", b"new-jpg")
+    _scan(db, src)
+    _unpair_all(db)
+    db.execute(
+        "UPDATE files SET captured_at = ? WHERE path = ?",
+        ("2024-01-01T10:00:00", f"{src}/DSC01234.ARW"),
+    )
+    db.execute(
+        "UPDATE files SET captured_at = ? WHERE path = ?",
+        ("2026-06-11T22:46:08", f"{src}/DSC01234.JPG"),
+    )
+    db.commit()
+
+    assert pair_raw_jpg(db) == 0
+    assert len(_photos(db)) == 2
+
+
+def test_pair_same_stem_accepts_same_burst_seconds(db, tmp_path):
+    # real RAW+JPG pair: same stem, same moment -> paired
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "DSC01234.ARW", b"raw")
+    make_fake_file(src, "DSC01234.JPG", b"jpg")
+    _scan(db, src)
+    _unpair_all(db)
+    db.execute(
+        "UPDATE files SET captured_at = '2026-06-11T22:46:08' WHERE path LIKE ?",
+        (f"{src}/DSC01234.%",),
+    )
+    db.commit()
+
+    assert pair_raw_jpg(db) == 1
+    assert len(_photos(db)) == 1
+
+
+def test_pair_same_stem_refuses_when_hashes_disagree(db, tmp_path):
+    # same stem, close in time, but phash says different photos -> NOT a pair
+    src = tmp_path / "src"
+    src.mkdir()
+    make_fake_file(src, "DSC01234.ARW", b"raw")
+    make_fake_file(src, "DSC01234.JPG", b"other-scene")
+    _scan(db, src)
+    _unpair_all(db)
+    db.execute(
+        "UPDATE files SET captured_at = '2026-06-11T22:46:08',"
+        " hash_phash = ? WHERE path = ?",
+        ("0" * 16, f"{src}/DSC01234.ARW"),
+    )
+    db.execute(
+        "UPDATE files SET captured_at = '2026-06-11T22:46:08',"
+        " hash_phash = ? WHERE path = ?",
+        ("f" * 16, f"{src}/DSC01234.JPG"),
+    )
+    db.commit()
+
+    assert pair_raw_jpg(db) == 0
+    assert len(_photos(db)) == 2
