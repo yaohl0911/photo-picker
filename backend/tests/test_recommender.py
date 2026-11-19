@@ -31,7 +31,8 @@ def mk_group(db, group_id, status="pending"):
     return group_id
 
 
-def mk_photo(db, photo_id, format="jpg", group_id=None, **scores):
+def mk_photo(db, photo_id, format="jpg", group_id=None, path=None,
+             captured_at=None, camera=None, **scores):
     """Insert files + photos + quality_scores rows for one logical photo.
 
     photos/files reference each other, so insert the photo with a NULL
@@ -39,7 +40,9 @@ def mk_photo(db, photo_id, format="jpg", group_id=None, **scores):
     Score kwargs not passed (or passed as None) stay NULL — the dimension is
     missing. With no scores at all, no quality_scores row is inserted.
     The primary file gets id photo_id * 10 + 1 so primary-file ordering is
-    deterministic across tests.
+    deterministic across tests. ``path``/``captured_at``/``camera`` feed the
+    management-value bonuses (EXIF presence, filename regularity); the
+    default path is an opaque long id so legacy totals stay bonus-free.
     """
     db.execute(
         "INSERT INTO photos (id, primary_file_id, group_id) VALUES (?, NULL, ?)",
@@ -47,8 +50,11 @@ def mk_photo(db, photo_id, format="jpg", group_id=None, **scores):
     )
     file_id = photo_id * 10 + 1
     db.execute(
-        "INSERT INTO files (id, path, format, photo_id) VALUES (?, ?, ?, ?)",
-        (file_id, f"/photos/p{photo_id}.{format}", format, photo_id),
+        "INSERT INTO files (id, path, format, photo_id, captured_at, camera)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (file_id,
+         path or f"/photos/4554893{photo_id}5876129.jpg",
+         format, photo_id, captured_at, camera),
     )
     db.execute("UPDATE photos SET primary_file_id = ? WHERE id = ?", (file_id, photo_id))
     present = {dim: score for dim, score in scores.items() if score is not None}
@@ -77,6 +83,94 @@ def test_default_weights_and_labels():
         "composition": "构图水平",
         "faces": "人物状态",
     }
+
+
+# --- management-value bonuses (EXIF + filename regularity) -------------------
+
+def test_filename_regularity_patterns():
+    from app.recommender import _filename_regularity
+
+    assert _filename_regularity("/x/2019-05-13 103817.jpg") == 1.0
+    assert _filename_regularity("/x/20190513_103817.jpg") == 1.0
+    assert _filename_regularity("/x/IMG_1234.JPG") == 0.9
+    assert _filename_regularity("/x/4554893058087652885.JPG") == 0.0
+    assert _filename_regularity("/x/mmexport1673456789.jpeg") == 0.0
+    assert _filename_regularity("/x/a3f9b2c1d4e5f6789012abcd.jpg") == 0.0
+
+
+def test_identical_photos_prefer_exif_and_regular_filename(db):
+    # User scenario: pixel-identical shots, equal quality scores. The copy
+    # with EXIF + a dated filename must be recommended, and the reason must
+    # explain both.
+    mk_group(db, 901)
+    mk_photo(db, 1, group_id=901,
+             path="/lib/2019-05-13 103817.jpg",
+             captured_at="2019-05-13T10:38:17", camera="HUAWEI ALN-AL80",
+             sharpness=80.0, exposure=80.0, noise=80.0)
+    mk_photo(db, 2, group_id=901,
+             path="/lib/4554893058087652885.JPG",
+             sharpness=80.0, exposure=80.0, noise=80.0)
+
+    result = recommend_group(db, 901)
+
+    assert result["recommended_photo_id"] == 1
+    assert "拍摄信息" in result["reason"]
+    assert "文件名" in result["reason"]
+    entry = result["ranked"][0]
+    assert entry["exif_bonus"] == 1.2
+    assert entry["filename_bonus"] == 1.0
+    assert result["ranked"][1]["exif_bonus"] == 0.0
+    assert result["ranked"][1]["filename_bonus"] == 0.0
+
+
+def test_bonus_does_not_override_real_quality_gap(db):
+    # A 5-point quality gap (92 vs 87) must beat the maximum 2.2 bonus.
+    mk_group(db, 902)
+    mk_photo(db, 3, group_id=902,
+             path="/lib/4554893058087652885.JPG",
+             sharpness=92.0, exposure=92.0, noise=92.0)
+    mk_photo(db, 4, group_id=902,
+             path="/lib/2019-05-13 103817.jpg",
+             captured_at="2019-05-13T10:38:17", camera="iPhone 15 Pro",
+             sharpness=87.0, exposure=87.0, noise=87.0)
+
+    result = recommend_group(db, 902)
+
+    assert result["recommended_photo_id"] == 3
+    assert "文件名" not in result["reason"]
+
+
+def test_bonus_tips_sub_two_point_tie(db):
+    # Within noise (85 vs 86), management value wins — that is exactly the
+    # pixel-identical re-export case.
+    mk_group(db, 903)
+    mk_photo(db, 5, group_id=903,
+             path="/lib/2019-05-13 103817.jpg",
+             captured_at="2019-05-13T10:38:17", camera="HUAWEI ALN-AL80",
+             sharpness=85.0, exposure=85.0, noise=85.0)
+    mk_photo(db, 6, group_id=903,
+             path="/lib/4554893058087652885.JPG",
+             sharpness=86.0, exposure=86.0, noise=86.0)
+
+    result = recommend_group(db, 903)
+
+    assert result["recommended_photo_id"] == 5
+
+
+def test_time_only_exif_beats_no_exif(db):
+    mk_group(db, 904)
+    mk_photo(db, 7, group_id=904,
+             path="/lib/IMG_4471.JPG",
+             captured_at="2019-05-13T10:38:17",
+             sharpness=70.0)
+    mk_photo(db, 8, group_id=904,
+             path="/lib/4554893058087652885.JPG",
+             sharpness=70.0)
+
+    ranked = rank_photos(db, [7, 8])
+
+    assert ranked[0]["photo_id"] == 7
+    assert ranked[0]["exif_bonus"] == 0.6
 
 
 def test_uniform_weights_recommend_sharper_photo(db):

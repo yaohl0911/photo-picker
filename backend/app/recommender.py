@@ -44,6 +44,68 @@ ADVANTAGE_DELTA = 10.0
 #: How many advantage dimensions the reason lists at most.
 MAX_REASON_DIMS = 2
 
+#: Management-value bonuses (added to total, NOT learned dimensions).
+#: Pixel-identical re-exports (e.g. chat-app copies) score within a
+#: fraction of a point of each other; these small bonuses then decide,
+#: while any real quality gap (>2.2 points) still wins.
+EXIF_BONUS = 1.2          # camera + capture time present
+EXIF_TIME_ONLY_BONUS = 0.6  # capture time present, camera missing
+FILENAME_BONUS = 1.0      # regular, sortable filename (see below)
+
+import re
+
+_DATE_SEP = re.compile(r"\d{4}[-._]\d{2}[-._]\d{2}")   # 2019-05-13 / 2019_05_13
+_DATE_TIGHT = re.compile(r"^\d{8}(?:[ _-]|$)")         # 20190513 103817
+_SEQISH = re.compile(
+    r"^(img|dsc|p|dji|gx|mwp|mv|wp|vid|screen|screenshot)[-_ ]?\d+$", re.I
+)
+_LONGNUM = re.compile(r"^\d{12,}$")        # 4554893058087652885
+_HEXJUNK = re.compile(r"^[0-9a-fA-F]{16,}$")  # content hashes
+_MMEXPORT = re.compile(r"^mmexport\d+$", re.I)   # WeChat dumps
+
+
+def _filename_regularity(path):
+    """Score how manageable a filename is: 0.0 (opaque) ... 1.0 (dated).
+
+    Dated names (2019-05-13 103817.jpg) sort by capture time and make the
+    archive self-explaining; camera sequence names (IMG_1234) are almost as
+    good; long numeric ids and hashes (4554893058087652885.JPG, mmexport…)
+    carry zero information. Opaque patterns are checked FIRST so a long id
+    can never masquerade as a date substring.
+    """
+    if not path:
+        return 0.0
+    stem = path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    stem = stem.rsplit(".", 1)[0]
+    if _MMEXPORT.match(stem) or _LONGNUM.match(stem) or _HEXJUNK.match(stem):
+        return 0.0
+    if _DATE_SEP.search(stem) or _DATE_TIGHT.match(stem):
+        return 1.0
+    if _SEQISH.match(stem):
+        return 0.9
+    if len(stem) <= 12 and re.match(r"^[A-Za-z0-9 _-]+$", stem):
+        return 0.5
+    return 0.3
+
+
+def _management_bonuses(conn, primary_file_id):
+    """(exif_bonus, filename_bonus) for one photo's primary file."""
+    if primary_file_id is None:
+        return 0.0, 0.0
+    row = conn.execute(
+        "SELECT path, captured_at, camera FROM files WHERE id = ?",
+        (primary_file_id,),
+    ).fetchone()
+    if row is None:
+        return 0.0, 0.0
+    if row["captured_at"] and row["camera"]:
+        exif = EXIF_BONUS
+    elif row["captured_at"]:
+        exif = EXIF_TIME_ONLY_BONUS
+    else:
+        exif = 0.0
+    return exif, FILENAME_BONUS * _filename_regularity(row["path"])
+
 
 def _weight_of(weights, dim):
     """Weight for one dimension: weights=None → DEFAULT_WEIGHTS, missing key → 1.0."""
@@ -91,12 +153,17 @@ def rank_photos(conn, photo_ids, weights=None):
         List of dicts sorted best-first (ties: RAW primary first, then the
         smaller primary_file_id):
 
-        {photo_id, total, scores, primary_file_id, is_raw, group_id}
+        {photo_id, total, scores, primary_file_id, is_raw, group_id,
+         exif_bonus, filename_bonus}
 
         ``total`` is the weighted mean as a float, or None when the photo has
         no scored dimension at all (always sorted last). ``scores`` holds
         only the dimensions that have values. ``is_raw`` is True when the
-        primary file's format column equals 'raw'.
+        primary file's format column equals 'raw'. Small management-value
+        bonuses (EXIF presence, regular filename — see the constants above)
+        are added to a scored photo's total; they tip pixel-identical
+        near-ties toward the better-archived copy without ever overriding
+        a real quality gap.
     """
     entries = []
     for photo_id in photo_ids:
@@ -117,6 +184,9 @@ def rank_photos(conn, photo_ids, weights=None):
                 denominator += weight
             if denominator > 0:
                 total = numerator / denominator
+        exif_bonus, filename_bonus = _management_bonuses(
+            conn, photo["primary_file_id"]
+        )
         entries.append(
             {
                 "photo_id": photo_id,
@@ -125,6 +195,13 @@ def rank_photos(conn, photo_ids, weights=None):
                 "primary_file_id": photo["primary_file_id"],
                 "is_raw": _is_raw(conn, photo["primary_file_id"]),
                 "group_id": photo["group_id"],
+                "exif_bonus": exif_bonus,
+                "filename_bonus": filename_bonus,
+                # sorting adds the small management bonuses to the quality
+                # total; the bonus never changes the displayed total itself
+                "bonus_total": (total if total is not None else 0.0)
+                + exif_bonus
+                + filename_bonus,
             }
         )
 
@@ -133,7 +210,7 @@ def rank_photos(conn, photo_ids, weights=None):
         file_id = entry["primary_file_id"]
         return (
             total is None,                             # unscored photos last
-            -(total if total is not None else 0.0),    # higher total first
+            -entry["bonus_total"],                    # quality + management value
             not entry["is_raw"],                       # RAW preferred on ties
             file_id if file_id is not None else float("inf"),
         )
@@ -206,6 +283,23 @@ def _build_reason(ranked):
         return "组内只有一张照片，无需比较，直接推荐。"
 
     other = ranked[1]  # the strongest competitor
+
+    # Management-value notes: these matter exactly when the pixel quality
+    # is a near-tie (chat-app re-exports of the same shot).
+    exif_note = ""
+    if rec["exif_bonus"] > other["exif_bonus"]:
+        if rec["exif_bonus"] >= EXIF_BONUS:
+            exif_note = "保留了完整拍摄信息（拍摄时间、相机型号），便于整理归档。"
+        else:
+            exif_note = "保留了拍摄时间信息，便于按时间归档。"
+    filename_note = ""
+    rec_reg = rec["filename_bonus"] / FILENAME_BONUS if FILENAME_BONUS else 0.0
+    other_reg = other["filename_bonus"] / FILENAME_BONUS if FILENAME_BONUS else 0.0
+    if rec_reg - other_reg >= 0.4 and rec_reg >= 0.9:
+        filename_note = "文件名包含拍摄日期、按名排序即按时间排序，便于文件管理。"
+
+    management = raw_note + exif_note + filename_note
+
     advantages = []
     for dim in DIMENSIONS:
         rec_score = rec["scores"].get(dim)
@@ -218,7 +312,7 @@ def _build_reason(ranked):
 
     if not advantages:
         neutral = "各维度表现接近（差距均在 10 分内），已按当前偏好权重排序，可自行比较后选择。"
-        return neutral + raw_note
+        return neutral + management
 
     advantages.sort(key=lambda item: -item[0])  # stable: equal Δ keeps DIMENSIONS order
     parts = []
@@ -229,4 +323,4 @@ def _build_reason(ranked):
         if index == 0:
             text += f"（领先 {_fmt(delta)} 分）"
         parts.append(text)
-    return "推荐这张：" + "、".join(parts) + "；综合表现最佳。" + raw_note
+    return "推荐这张：" + "、".join(parts) + "；综合表现最佳。" + management
