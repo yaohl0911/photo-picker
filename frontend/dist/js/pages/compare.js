@@ -126,8 +126,6 @@ export function renderCompare(container) {
   let selected = new Set(); // 选中的 photo_id 集合（默认预选推荐）
   let viewer = null; // SyncViewer 实例
   let busy = false; // 决策请求进行中
-  let zeroKeepArmed = false; // 「整组淘汰」二次确认已激活
-  let zeroKeepTimer = null; // 二次确认 5 秒超时句柄
   let cheatsheetOpen = false;
   let historyInitGroupId = null; // 入页时从历史初始化的撤销目标（0 = 无历史）
   const feedbackState = new Map(); // photo_id -> 'like' | 'dislike'（会话内）
@@ -295,19 +293,15 @@ export function renderCompare(container) {
     });
     if (selectedCountEl) selectedCountEl.textContent = String(selected.size);
     if (confirmBtnEl) {
-      // 0 选中 = 整组淘汰（confirmDecision 内二次确认），按钮保持可用；
-      // 二次确认已激活时按钮文案由 arm 逻辑独占管理
-      if (!zeroKeepArmed) {
-        confirmBtnEl.textContent = busy
-          ? '处理中…'
-          : (selected.size === 0 ? '整组淘汰' : `确认保留 ${selected.size} 张`);
-      }
+      // 0 选中 = 整组淘汰：按钮文案直接切换为警示版（红），单击即执行
+      confirmBtnEl.textContent = busy
+        ? '处理中…'
+        : (selected.size === 0 ? '整组淘汰' : `确认保留 ${selected.size} 张`);
       confirmBtnEl.disabled = busy;
-      confirmBtnEl.title = zeroKeepArmed
-        ? '再点一次执行整组淘汰'
-        : (selected.size === 0
-          ? '未选中任何照片：点击后将进入整组淘汰确认（需再点一次）'
-          : '快捷键 Enter');
+      confirmBtnEl.classList.toggle('btn--danger', !busy && selected.size === 0);
+      confirmBtnEl.title = selected.size === 0
+        ? '未选中任何照片：点击将把这组全部移入淘汰目录'
+        : '快捷键 Enter';
     }
   }
 
@@ -317,45 +311,24 @@ export function renderCompare(container) {
     if (confirmBtnEl) confirmBtnEl.disabled = flag;
     if (dismissBtnEl) dismissBtnEl.disabled = flag;
     if (undoBtnEl) undoBtnEl.disabled = flag;
-    if (confirmBtnEl && !zeroKeepArmed) {
+    if (confirmBtnEl) {
       confirmBtnEl.textContent = flag
         ? '处理中…'
         : (selected.size === 0 ? '整组淘汰' : `确认保留 ${selected.size} 张`);
+      confirmBtnEl.classList.toggle('btn--danger', !flag && selected.size === 0);
     }
   }
 
   async function confirmDecision() {
     if (!group || !photos || busy) return;
     if (selected.size === 0) {
-      // 保留 0 张 = 整组全部淘汰：二次确认防误触（5 秒内再点一次生效）
+      // 保留 0 张 = 整组全部淘汰：按钮文案已警示（红色「整组淘汰」），
+      // 无需二次确认；淘汰目录+历史页可撤销是兜底安全网
       const n = photos.length;
       if (n === 0) {
         toast('当前组没有照片', { kind: 'warn' });
         return;
       }
-      if (!zeroKeepArmed) {
-        zeroKeepArmed = true;
-        if (confirmBtnEl) {
-          confirmBtnEl.textContent = `再点一次：整组淘汰 ${n} 张`;
-          confirmBtnEl.classList.add('btn--danger');
-          confirmBtnEl.title = '第一次点击仅为确认提醒；5 秒内再点一次才会执行';
-        }
-        toast(
-          `将把这组 ${n} 张照片全部移入淘汰目录（不会真正删除，历史页可撤销）。` +
-          '如确认整组都不要，请在 5 秒内再次点击。',
-          { kind: 'warn', duration: 5000 },
-        );
-        if (zeroKeepTimer) clearTimeout(zeroKeepTimer);
-        zeroKeepTimer = setTimeout(() => {
-          zeroKeepArmed = false;
-          if (confirmBtnEl) confirmBtnEl.classList.remove('btn--danger');
-          updateSelectionUI();
-        }, 5000);
-        return;
-      }
-      if (zeroKeepTimer) clearTimeout(zeroKeepTimer);
-      zeroKeepArmed = false;
-      if (confirmBtnEl) confirmBtnEl.classList.remove('btn--danger');
     }
     const keepIds = photos.filter((p) => selected.has(p.photo_id)).map((p) => p.photo_id);
     const learn = learnToggleEl ? learnToggleEl.checked : true;
@@ -933,6 +906,5 @@ export function renderCompare(container) {
     disposed = true;
     window.removeEventListener('keydown', onKeydown);
     if (viewer) viewer.destroy();
-    if (zeroKeepTimer) clearTimeout(zeroKeepTimer);
   };
 }
