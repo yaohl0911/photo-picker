@@ -131,10 +131,18 @@ def _dissolve_pending_groups(conn: sqlite3.Connection) -> None:
 
     Decided and not_duplicate groups — and the photos inside them — are
     left untouched so re-running never overrides a user decision.
+    A pending group that still has decision history (the user UNDID a
+    decision and the group went back to pending to be re-decided) is
+    kept as well: deleting it would break the decisions.group_id
+    foreign key, and undoing means the user wants THIS group back, not
+    a re-clustered one.
     """
     ids = [
         row["id"]
-        for row in conn.execute("SELECT id FROM groups WHERE status = 'pending'")
+        for row in conn.execute(
+            "SELECT id FROM groups WHERE status = 'pending' "
+            "AND NOT EXISTS (SELECT 1 FROM decisions d WHERE d.group_id = groups.id)"
+        )
     ]
     if not ids:
         return

@@ -240,6 +240,38 @@ def test_dismiss_group_marks_not_duplicate_and_survives_rebuild(db):
     assert row["status"] == "not_duplicate"
 
 
+def test_undone_group_survives_rebuild_without_fk_error(db):
+    # Regression: a decision exists on the group (decision history), the
+    # group went back to 'pending' via undo. Rebuilding used to DELETE
+    # that pending group and hit the decisions.group_id foreign key.
+    from datetime import datetime
+
+    ins_file(db, "dir/a.jpg", H0, AH0, DH0, T0)
+    ins_file(db, "dir/b.jpg", H0, AH0, DH0, "2026-01-01T10:00:30")
+    grouper.build_groups(db)
+    gid = db.execute("SELECT id FROM groups").fetchone()["id"]
+    photos = [
+        r["id"] for r in db.execute("SELECT id FROM photos WHERE group_id = ?", (gid,))
+    ]
+
+    # a decision row referencing the group, then the group returns to pending
+    db.execute(
+        "INSERT INTO decisions (group_id, kept_photo_ids, decided_at) "
+        "VALUES (?, ?, ?)",
+        (gid, '["%d"]' % photos[0], datetime.now().isoformat(timespec="seconds")),
+    )
+    db.execute("UPDATE groups SET status = 'pending' WHERE id = ?", (gid,))
+    db.commit()
+
+    # must not raise sqlite3.IntegrityError: FOREIGN KEY constraint failed
+    res = grouper.build_groups(db)
+    assert res == {"groups": 0, "pairs": 0}
+    row = db.execute("SELECT status FROM groups WHERE id = ?", (gid,)).fetchone()
+    assert row["status"] == "pending"
+    kept = db.execute("SELECT COUNT(*) FROM decisions WHERE group_id = ?", (gid,)).fetchone()[0]
+    assert kept == 1
+
+
 # --- BK-tree internals & performance ------------------------------------------
 
 
