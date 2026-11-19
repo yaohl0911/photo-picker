@@ -86,6 +86,15 @@ CREATE TABLE IF NOT EXISTS move_log (
     undone INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS video_moves (
+    id INTEGER PRIMARY KEY,
+    decision_id INTEGER REFERENCES decisions(id),
+    src_path TEXT,
+    dst_path TEXT,
+    moved_at TEXT,
+    undone INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS scan_runs (
     id INTEGER PRIMARY KEY,
     started_at TEXT,

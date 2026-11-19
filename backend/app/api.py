@@ -302,8 +302,9 @@ def decide_group(conn, group_id, keep_photo_ids, learn=True):
     if learn:
         recommender.recompute_all(conn, weights=effective_weights(conn))
     moved = conn.execute(
-        "SELECT COUNT(*) FROM move_log WHERE decision_id = ?",
-        (decision_id,),
+        "SELECT (SELECT COUNT(*) FROM move_log WHERE decision_id = ?)"
+        "     + (SELECT COUNT(*) FROM video_moves WHERE decision_id = ?)",
+        (decision_id, decision_id),
     ).fetchone()[0]
     return {
         "decision_id": decision_id,
@@ -445,8 +446,10 @@ def list_history(conn, offset=0, limit=50):
     rows = conn.execute(
         "SELECT d.id AS decision_id, d.group_id, g.status AS group_status,"
         "       d.kept_photo_ids, d.decided_at, d.applied_at,"
-        "       (SELECT COUNT(*) FROM move_log m"
-        "         WHERE m.decision_id = d.id) AS moved_files"
+        "       (SELECT (SELECT COUNT(*) FROM move_log m"
+        "                 WHERE m.decision_id = d.id)"
+        "        + (SELECT COUNT(*) FROM video_moves v"
+        "            WHERE v.decision_id = d.id)) AS moved_files"
         " FROM decisions d JOIN groups g ON g.id = d.group_id"
         " ORDER BY d.id DESC LIMIT ? OFFSET ?",
         (limit, offset),

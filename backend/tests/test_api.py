@@ -679,3 +679,24 @@ class TestListDirs:
         f.write_text("x")
         with pytest.raises(ValueError):
             api.list_dirs(db, str(f))
+
+
+# ---------------------------------------------------------------------------
+# decide_group / list_history count companion videos in moved_files
+# ---------------------------------------------------------------------------
+
+def test_decide_group_moved_files_counts_live_photo_videos(scene):
+    conn = scene["conn"]
+    rejected = scene["rejected_root"]
+    # IMG_2.JPG is rejected by keeping photo 1; give it a Live Photo MOV
+    video = scene["src_root"] / "a" / "IMG_2.MOV"
+    video.write_bytes(b"live-video")
+
+    result = api.decide_group(conn, 1, [1], learn=False)
+
+    # 2 moved photo files + 1 companion video
+    assert result["moved_files"] == 3
+    assert (rejected / "a" / "IMG_2.MOV").exists()
+
+    history = api.list_history(conn)
+    assert history["decisions"][0]["moved_files"] == 3

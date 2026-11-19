@@ -550,3 +550,101 @@ def test_apply_decision_zero_keep_rejects_whole_group(db, env):
     assert db.execute(
         "SELECT status FROM groups WHERE id = ?", (group_id,)
     ).fetchone()["status"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Live Photo companion videos ride along with a rejected photo
+# ---------------------------------------------------------------------------
+
+def test_rejected_photo_moves_same_stem_video(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    video = env["src_root"] / "a" / "IMG_1.MOV"
+    video.write_bytes(b"fake-live-photo-video")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    # photo and its video both moved into the same rejected subfolder
+    assert not (env["src_root"] / "a" / "IMG_1.JPG").exists()
+    assert not video.exists()
+    assert (env["rejected_root"] / "a" / "IMG_1.JPG").exists()
+    assert (env["rejected_root"] / "a" / "IMG_1.MOV").exists()
+    rows = db.execute("SELECT src_path, dst_path, undone FROM video_moves").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["src_path"] == str(video)
+    assert rows[0]["undone"] == 0
+
+
+def test_kept_photo_video_not_touched(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    keeper_video = env["src_root"] / "a" / "KEEPER.MOV"
+    keeper_video.write_bytes(b"keeper-video")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert keeper_video.exists()  # kept photo keeps its Live Photo
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 0
+
+
+def test_no_video_leaves_no_sidecar_row(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 0
+
+
+def test_sidecar_video_dst_conflict_gets_suffix(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    video = env["src_root"] / "a" / "IMG_1.MOV"
+    video.write_bytes(b"src-video")
+    # destination already occupied by an unrelated video of the same name
+    (env["rejected_root"] / "a").mkdir(parents=True, exist_ok=True)
+    (env["rejected_root"] / "a" / "IMG_1.MOV").write_bytes(b"occupied")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    moved = env["rejected_root"] / "a" / "IMG_1_1.MOV"
+    assert moved.exists()
+    assert moved.read_bytes() == b"src-video"
+    assert (env["rejected_root"] / "a" / "IMG_1.MOV").read_bytes() == b"occupied"
+
+
+def test_sidecar_video_matching_is_case_insensitive_and_multi_ext(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    # vendor exports lowercase video next to uppercase photo stem
+    (env["src_root"] / "a" / "img_1.mp4").write_bytes(b"lower-mp4")
+    (env["src_root"] / "a" / "IMG_1.MOV").write_bytes(b"upper-mov")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+
+    assert (env["rejected_root"] / "a" / "img_1.mp4").exists()
+    assert (env["rejected_root"] / "a" / "IMG_1.MOV").exists()
+    assert db.execute("SELECT COUNT(*) FROM video_moves").fetchone()[0] == 2
+
+
+def test_undo_restores_videos_together_with_photos(db, env):
+    group_id, photo_ids = mk_group(
+        db, env["src_root"], [["a/IMG_1.JPG"], ["a/KEEPER.JPG"]]
+    )
+    video = env["src_root"] / "a" / "IMG_1.MOV"
+    video.write_bytes(b"live-video")
+
+    executor.apply_decision(db, group_id, [photo_ids[1]], learn=False)
+    restored = executor.undo_group(db, group_id)
+
+    # restored counts both the photo and its companion video
+    assert restored == 2
+    assert video.exists()
+    assert video.read_bytes() == b"live-video"
+    assert (env["src_root"] / "a" / "IMG_1.JPG").exists()
+    assert db.execute(
+        "SELECT undone FROM video_moves"
+    ).fetchone()["undone"] == 1

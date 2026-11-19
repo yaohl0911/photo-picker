@@ -136,7 +136,10 @@ def apply_decision(
             try:
                 # per-file: each photo rejects into ITS OWN source folder
                 rejected_dir = rejected_dir_for(conn, row["path"])
-                _move_file(conn, row["id"], row["path"], rejected_dir, decision_id)
+                dst = _move_file(
+                    conn, row["id"], row["path"], rejected_dir, decision_id
+                )
+                _move_sidecar_videos(conn, row["path"], dst, decision_id)
             except MoveError as exc:
                 logger.warning("executor move failed: %s", exc)
                 _record_execute_error(conn, str(exc))
@@ -207,6 +210,34 @@ def undo_group(conn: sqlite3.Connection, group_id: int) -> int:
         conn.execute("UPDATE move_log SET undone = 1 WHERE id = ?", (row["id"],))
         restored += 1
 
+    video_rows = conn.execute(
+        "SELECT id, src_path, dst_path FROM video_moves "
+        "WHERE decision_id = ? AND undone = 0 ORDER BY id DESC",
+        (decision_id,),
+    ).fetchall()
+    for row in video_rows:
+        src, dst = row["src_path"], row["dst_path"]
+        if dst is None or not os.path.exists(dst):
+            message = f"cannot undo video move {src} -> {dst}: file missing at destination"
+            logger.warning("executor undo: %s", message)
+            _record_execute_error(conn, message)
+            continue
+        target = _unique_dst(src)
+        try:
+            parent = os.path.dirname(target)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            shutil.move(dst, target)
+        except OSError as exc:  # includes shutil.Error
+            message = f"undo video move {dst} -> {target} failed: {exc}"
+            logger.warning("executor undo: %s", message)
+            _record_execute_error(conn, message)
+            continue
+        conn.execute(
+            "UPDATE video_moves SET undone = 1 WHERE id = ?", (row["id"],)
+        )
+        restored += 1
+
     conn.execute(
         "UPDATE decisions SET applied_at = NULL WHERE id = ?", (decision_id,)
     )
@@ -260,6 +291,70 @@ def _move_file(
     )
     conn.execute("UPDATE files SET path = ? WHERE id = ?", (dst, file_id))
     return dst
+
+
+# Video extensions treated as Live Photo companions of a rejected photo.
+# Videos are never indexed (scanner SUPPORTED is images-only); they only
+# ride along when their sibling photo is rejected, so a Live Photo never
+# gets split across two folders.
+VIDEO_EXTS = {".mov", ".mp4", ".m4v", ".avi", ".mkv", ".webm"}
+
+
+def _find_sidecar_videos(src: str) -> list[str]:
+    """Same-stem video files sitting next to src (Live Photo companions).
+
+    The stem comparison is case-insensitive (iPhone exports IMG_1234.HEIC
+    with IMG_1234.MOV; some vendors lowercase one side). Returns sorted
+    paths; missing folder or permission issues yield an empty list.
+    """
+    stem = os.path.splitext(os.path.basename(src))[0].lower()
+    folder = os.path.dirname(src) or "."
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+    found = []
+    for name in names:
+        name_stem, name_ext = os.path.splitext(name)
+        if name_ext.lower() in VIDEO_EXTS and name_stem.lower() == stem:
+            candidate = os.path.join(folder, name)
+            if os.path.isfile(candidate):
+                found.append(candidate)
+    return sorted(found)
+
+
+def _move_sidecar_videos(
+    conn: sqlite3.Connection, src: str, photo_dst: str, decision_id: int | None
+) -> int:
+    """Move same-stem videos alongside a rejected photo; return the count.
+
+    Videos land in the same rejected subfolder as the photo (they are not
+    files-table rows, so their path is tracked in video_moves instead of
+    move_log). Failures are logged into scan_runs like photo move errors
+    and never abort the decision.
+    """
+    moved = 0
+    for video in _find_sidecar_videos(src):
+        video_dst = _unique_dst(
+            os.path.join(os.path.dirname(photo_dst), os.path.basename(video))
+        )
+        try:
+            parent = os.path.dirname(video_dst)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            shutil.move(video, video_dst)
+        except OSError as exc:  # includes shutil.Error
+            message = f"video move {video} -> {video_dst} failed: {exc}"
+            logger.warning("executor: %s", message)
+            _record_execute_error(conn, message)
+            continue
+        conn.execute(
+            "INSERT INTO video_moves (decision_id, src_path, dst_path, "
+            "moved_at, undone) VALUES (?, ?, ?, ?, 0)",
+            (decision_id, video, video_dst, _now()),
+        )
+        moved += 1
+    return moved
 
 
 def _rel_path_under(conn: sqlite3.Connection, src: str) -> str:
