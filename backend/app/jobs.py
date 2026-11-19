@@ -175,6 +175,7 @@ class JobManager:
                 "error": None,
                 "note": None,
                 "result": None,
+                "stage_times": None,
                 "started_at": _now(),
                 "finished_at": None,
             }
@@ -322,9 +323,20 @@ class JobManager:
         import app.db as db
         from app import api
 
+        # per-stage start/finish timestamps for the UI's five progress
+        # bars + elapsed times; survives page reloads because it rides on
+        # the job status dict
+        stage_times: dict[str, dict] = {}
+        current_stage = [None]
+
         def cb(phase: str, current: int, total: int) -> None:
-            # note carries the current stage name for the UI
-            self._update(job_id, note=phase)
+            if phase != current_stage[0]:
+                now = _now()
+                if current_stage[0] is not None:
+                    stage_times.setdefault(current_stage[0], {})["finished"] = now
+                stage_times[phase] = {"started": now, "finished": None}
+                current_stage[0] = phase
+                self._update(job_id, note=phase, stage_times=dict(stage_times))
             self._set_progress(job_id, current, total)
             self._call_user_cb(progress_cb, phase, current, total)
 
@@ -334,7 +346,11 @@ class JobManager:
                 report = api.run_full_pipeline_blocking(conn, progress_cb=cb)
             finally:
                 conn.rollback()  # stages commit; clears residual txn state
-        self._update(job_id, result=report)
+        if current_stage[0] is not None:
+            stage = stage_times.setdefault(current_stage[0], {})
+            if stage.get("finished") is None:
+                stage["finished"] = _now()
+        self._update(job_id, result=report, stage_times=dict(stage_times))
         self._finalize(job_id, phase="finished")
 
     # -- helpers --------------------------------------------------------

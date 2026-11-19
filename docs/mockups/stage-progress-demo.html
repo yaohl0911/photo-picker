@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>示意图：流水线分阶段进度</title>
+<style>
+  /* 与 photo-picker 前端一致的设计令牌（浅色卡片风） */
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --surface-soft: #f8fafc;
+    --text-1: #1c2128; --text-2: #59636e; --text-3: #8a93a0;
+    --line: #e5e8ec; --accent: #1f5fd0; --accent-soft: #edf3fe;
+    --ok: #178a58; --ok-soft: #e8f5ee;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text-1);
+    font: 14px/1.55 -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    padding: 28px; display: flex; flex-direction: column; gap: 14px;
+    align-items: flex-start;
+  }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px 20px; width: 640px;
+    box-shadow: 0 1px 3px rgba(28, 33, 40, .05);
+  }
+  .card__head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+  .card__title { font-size: 16px; font-weight: 700; }
+  .card__meta { font-size: 13px; color: var(--text-2); }
+  .job-summary {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 8px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 14px;
+  }
+  .job-summary__phase { font-weight: 600; color: var(--accent); font-size: 13.5px; }
+  .job-summary__elapsed { font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 13px; }
+  .job-summary__elapsed strong { color: var(--text-1); font-size: 15px; }
+
+  .stage-row { display: grid; grid-template-columns: 72px 1fr 44px 52px;
+    align-items: center; gap: 10px; padding: 7px 0; }
+  .stage-row + .stage-row { border-top: 1px dashed var(--line); }
+  .stage-name { font-size: 13px; color: var(--text-2); }
+  .stage-row.is-current .stage-name { color: var(--text-1); font-weight: 600; }
+  .stage-row.is-pending .stage-name { color: var(--text-3); }
+
+  .bar { height: 8px; border-radius: 999px; background: #eef1f5; overflow: hidden; position: relative; }
+  .bar__fill { height: 100%; border-radius: 999px; }
+  .is-done .bar__fill { background: var(--ok); width: 100%; }
+  .is-current .bar__fill { background: var(--accent); width: 62%;
+    background-image: linear-gradient(90deg, var(--accent), #3d75e0); }
+  .is-pending .bar__fill { width: 0; }
+
+  .stage-pct { font-size: 12.5px; font-variant-numeric: tabular-nums;
+    text-align: right; color: var(--text-2); }
+  .is-current .stage-pct { color: var(--accent); font-weight: 600; }
+  .is-done .stage-pct { color: var(--ok); font-weight: 600; }
+  .is-pending .stage-pct { color: var(--text-3); }
+
+  .stage-time { font-size: 12.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
+  .is-pending .stage-time { color: var(--text-3); }
+  .stage-time.is-live { color: var(--accent); }
+
+  .hint { color: var(--text-3); font-size: 12px; width: 640px; }
+  .footnote { width: 640px; color: var(--text-3); font-size: 12.5px;
+    border-left: 3px solid var(--accent-soft); padding-left: 10px; }
+</style>
+</head>
+<body>
+
+  <div class="card" id="job-card">
+    <div class="card__head">
+      <h2 class="card__title">扫描作业</h2>
+      <span class="card__meta">#12 · 完整流水线</span>
+    </div>
+
+    <div class="job-summary">
+      <span class="job-summary__phase">进行中 · 感知哈希</span>
+      <span class="job-summary__elapsed">总运行时间 <strong>08:57</strong></span>
+    </div>
+
+    <div class="stage-row is-done">
+      <span class="stage-name">索引扫描</span>
+      <div class="bar"><div class="bar__fill"></div></div>
+      <span class="stage-pct">100%</span>
+      <span class="stage-time">00:42</span>
+    </div>
+
+    <div class="stage-row is-current">
+      <span class="stage-name">感知哈希</span>
+      <div class="bar"><div class="bar__fill"></div></div>
+      <span class="stage-pct">62%</span>
+      <span class="stage-time is-live">08:15</span>
+    </div>
+
+    <div class="stage-row is-pending">
+      <span class="stage-name">相似分组</span>
+      <div class="bar"><div class="bar__fill"></div></div>
+      <span class="stage-pct">—</span>
+      <span class="stage-time">待开始</span>
+    </div>
+
+    <div class="stage-row is-pending">
+      <span class="stage-name">质量分析</span>
+      <div class="bar"><div class="bar__fill"></div></div>
+      <span class="stage-pct">—</span>
+      <span class="stage-time">待开始</span>
+    </div>
+
+    <div class="stage-row is-pending">
+      <span class="stage-name">推荐计算</span>
+      <div class="bar"><div class="bar__fill"></div></div>
+      <span class="stage-pct">—</span>
+      <span class="stage-time">待开始</span>
+    </div>
+  </div>
+
+  <p class="hint">↑ 作业运行中的样子：完成阶段绿条 100% + 各自耗时；当前阶段蓝色进度条 + 百分比 + 累计耗时（秒表跳动）；未开始的灰色。</p>
+
+  <p class="footnote">运行时数据来源：后端作业的 started_at + 各阶段进度回调换算各阶段起止时刻；总运行时间 = 现在时刻 − started_at，每秒刷新。</p>
+</body>
+</html>

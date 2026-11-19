@@ -100,6 +100,9 @@ export function renderSettings(container) {
     jobId: null,
     pollTimer: null,
     pollBusy: false,
+    jobStartedAt: null, // pipeline 总运行时间基准（started_at 毫秒）
+    stageStart: null, // 当前阶段起始毫秒（stage_times[note].started）
+    elapsedTimer: null, // 每秒跳动运行时间的 interval
   };
 
   const section = document.createElement('section');
@@ -150,13 +153,13 @@ export function renderSettings(container) {
         <h2 class="card__title">扫描作业</h2>
         <span class="card__meta" id="job-kind" data-testid="job-kind"></span>
       </div>
-      <div class="progress" role="progressbar" aria-label="扫描进度"
+      <div class="progress" id="job-progress" role="progressbar" aria-label="扫描进度"
            aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
         <div class="progress__fill" id="job-fill" data-testid="job-progress"></div>
       </div>
       <div class="progress-row">
         <span id="job-phase" data-testid="job-phase">准备中…</span>
-        <span class="progress-row__pct" id="job-pct" data-testid="job-pct">0%</span>
+        <span class="progress-row__pct" id="job-right" data-testid="job-right">0%</span>
       </div>
       <ol class="stage-list" id="job-stages" data-testid="job-stages" hidden></ol>
       <p class="alert alert--error" id="job-error" data-testid="job-error" hidden></p>
@@ -187,8 +190,9 @@ export function renderSettings(container) {
   const jobCard = $('#job-card');
   const jobKind = $('#job-kind');
   const jobFill = $('#job-fill');
+  const jobProgressWrap = $('#job-progress');
   const jobPhase = $('#job-phase');
-  const jobPct = $('#job-pct');
+  const jobRight = $('#job-right');
   const jobError = $('#job-error');
   const jobStages = $('#job-stages');
   const progressBar = section.querySelector('.progress');
@@ -316,6 +320,49 @@ export function renderSettings(container) {
 
   // --- 扫描作业轮询 ---------------------------------------------------------------
 
+  // 秒数 → "mm:ss" / "h:mm:ss"（超一小时）
+  function fmtElapsed(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '--:--';
+    const s = Math.floor(seconds);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  }
+
+  // pipeline 作业：右侧显示总运行时间（running 实时跳动，finished 固定）
+  function totalElapsedText(job) {
+    const started = Date.parse(job.started_at || '');
+    if (!Number.isFinite(started)) return '--:--';
+    if (job.phase === 'finished' && job.finished_at) {
+      const ended = Date.parse(job.finished_at);
+      if (Number.isFinite(ended)) return fmtElapsed((ended - started) / 1000);
+    }
+    return fmtElapsed((Date.now() - started) / 1000);
+  }
+
+  function stopElapsedTimer() {
+    if (state.elapsedTimer !== null) {
+      clearInterval(state.elapsedTimer);
+      state.elapsedTimer = null;
+    }
+  }
+
+  // 每秒刷新：总运行时间 + 当前阶段行耗时（跳动的秒表）
+  function ensureElapsedTimer() {
+    if (state.elapsedTimer !== null) return;
+    state.elapsedTimer = setInterval(() => {
+      if (state.jobStartedAt != null) {
+        jobRight.textContent = fmtElapsed((Date.now() - state.jobStartedAt) / 1000);
+      }
+      if (state.stageStart != null) {
+        const el = jobStages.querySelector('.stage-row.is-current .stage-row__time');
+        if (el) el.textContent = fmtElapsed((Date.now() - state.stageStart) / 1000);
+      }
+    }, 1000);
+  }
+
   function setJobState(job) {
     jobCard.hidden = false;
     jobKind.textContent = `#${job.id} · ${KIND_LABELS[job.kind] || job.kind || '作业'}`;
@@ -323,7 +370,6 @@ export function renderSettings(container) {
     const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
     const pct = Math.round(progress * 100);
     jobFill.style.width = pct + '%';
-    jobPct.textContent = pct + '%';
     progressBar.setAttribute('aria-valuenow', String(pct));
 
     jobPhase.textContent =
@@ -332,8 +378,19 @@ export function renderSettings(container) {
         : PHASE_LABELS[job.phase] || job.phase || '未知状态';
 
     if (job.kind === 'pipeline') {
+      // 五个阶段进度条 + 运行时间；不再显示单条总进度条
+      jobProgressWrap.hidden = true;
+      state.jobStartedAt = Date.parse(job.started_at || '') || null;
+      const stageInfo = job.stage_times && job.note ? job.stage_times[job.note] : null;
+      state.stageStart = stageInfo ? (Date.parse(stageInfo.started || '') || null) : null;
+      jobRight.textContent = totalElapsedText(job);
+      if (job.phase === 'running') ensureElapsedTimer();
+      else stopElapsedTimer();
       renderStages(job);
     } else {
+      jobProgressWrap.hidden = false;
+      jobRight.textContent = pct + '%';
+      stopElapsedTimer();
       jobStages.hidden = true;
     }
     jobFill.classList.toggle('is-done', job.phase === 'finished');
@@ -355,36 +412,71 @@ export function renderSettings(container) {
   }
 
   // 流水线分阶段进度：五项列表，各自显示 完成✓ / 当前百分比 / 等待
+  // 流水线分阶段进度：五行「阶段名 | 进度条 | 百分比 | 耗时」
   function renderStages(job) {
     const noteIdx = PIPELINE_STAGES.findIndex((s) => s.key === job.note);
     const finished = job.phase === 'finished';
     const progress = Math.max(0, Math.min(1, Number(job.progress) || 0));
+    const times = job.stage_times || {};
 
     jobStages.replaceChildren();
     PIPELINE_STAGES.forEach((stage, i) => {
-      const li = document.createElement('li');
-      let phaseClass = 'pending';
+      let phaseClass = 'is-pending';
       if (finished) {
-        phaseClass = 'done';
+        phaseClass = 'is-done';
       } else if (noteIdx < 0) {
-        phaseClass = i === 0 ? 'current' : 'pending';
+        phaseClass = i === 0 ? 'is-current' : 'is-pending';
       } else if (i < noteIdx) {
-        phaseClass = 'done';
+        phaseClass = 'is-done';
       } else if (i === noteIdx) {
-        phaseClass = 'current';
+        phaseClass = 'is-current';
       }
-      li.className = `stage-list__item is-${phaseClass}`;
+
+      const li = document.createElement('li');
+      li.className = `stage-row ${phaseClass}`;
       li.dataset.stage = stage.key;
-      const label = document.createElement('span');
-      label.className = 'stage-list__label';
-      label.textContent = stage.label;
-      li.appendChild(label);
-      if (phaseClass === 'current') {
-        const pctSpan = document.createElement('span');
-        pctSpan.className = 'stage-list__pct';
-        pctSpan.textContent = Math.round(progress * 100) + '%';
-        li.appendChild(pctSpan);
+
+      const name = document.createElement('span');
+      name.className = 'stage-row__name';
+      name.textContent = stage.label;
+      li.appendChild(name);
+
+      const bar = document.createElement('div');
+      bar.className = 'stage-row__bar';
+      const fill = document.createElement('div');
+      fill.className = 'stage-row__fill';
+      fill.style.width =
+        phaseClass === 'is-done' ? '100%'
+        : phaseClass === 'is-current' ? (progress * 100).toFixed(1) + '%'
+        : '0%';
+      bar.appendChild(fill);
+      li.appendChild(bar);
+
+      const pctSpan = document.createElement('span');
+      pctSpan.className = 'stage-row__pct';
+      pctSpan.textContent =
+        phaseClass === 'is-done' ? '100%'
+        : phaseClass === 'is-current' ? Math.round(progress * 100) + '%'
+        : '—';
+      li.appendChild(pctSpan);
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'stage-row__time' + (phaseClass === 'is-current' ? ' is-live' : '');
+      const t = times[stage.key];
+      if (t && t.started) {
+        if (phaseClass === 'is-current') {
+          timeSpan.textContent = fmtElapsed((Date.now() - Date.parse(t.started)) / 1000);
+        } else {
+          const ended = t.finished ? Date.parse(t.finished) : Date.now();
+          timeSpan.textContent = fmtElapsed((ended - Date.parse(t.started)) / 1000);
+        }
+      } else if (phaseClass === 'is-done') {
+        timeSpan.textContent = '已完成';
+      } else {
+        timeSpan.textContent = '待开始';
       }
+      li.appendChild(timeSpan);
+
       jobStages.appendChild(li);
     });
     jobStages.hidden = false;
@@ -554,8 +646,9 @@ export function renderSettings(container) {
   loadServerSettings(); // 与统计加载并行：服务端优先，失败降级 localStorage
   resumeActiveJob(); // 恢复后台仍在跑的作业进度（切页返回场景）
 
-  // 离开页面前清掉轮询定时器
+  // 离开页面前清掉轮询/计时定时器
   return function cleanup() {
     stopPolling();
+    stopElapsedTimer();
   };
 }

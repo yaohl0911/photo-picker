@@ -253,6 +253,12 @@ class TestPipeline:
         }
         assert st["result"]["scan"]["total"] == 2
         assert db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 2
+        # per-stage start/finish timestamps for the five progress bars
+        times = st["stage_times"]
+        assert set(times) == {"scan", "hash", "group", "analysis", "recommend"}
+        for stage, t in times.items():
+            assert t["started"], stage
+            assert t["finished"], stage  # job finished -> all stages closed
 
     def test_pipeline_failure_recorded_not_raised(self, manager, db, monkeypatch):
         import app.api as api_mod

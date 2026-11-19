@@ -1502,7 +1502,7 @@ kbd {
 }
 
 
-/* ---------- 流水线分阶段进度（stage-list）-------------------------------------- */
+/* ---------- 流水线分阶段进度（stage-row：五行进度条+耗时）-------------------- */
 
 .stage-list {
   list-style: none;
@@ -1510,52 +1510,64 @@ kbd {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
 }
 
-.stage-list__item {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  position: relative;
-  padding: 1px 0 1px 24px;
+.stage-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 44px 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
   font-size: 13px;
   color: var(--text-3); /* 等待中 */
 }
 
-.stage-list__item::before {
-  position: absolute;
-  left: 2px;
-  width: 16px;
-  text-align: center;
-  content: '○';
+.stage-row + .stage-row {
+  border-top: 1px dashed var(--line-soft);
+}
+
+.stage-row__name {
+  font-size: 13px;
   color: var(--text-3);
 }
 
-.stage-list__item.is-done {
-  color: var(--text-2);
+.stage-row__bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #eef1f5;
+  overflow: hidden;
 }
 
-.stage-list__item.is-done::before {
-  content: '✓';
-  color: var(--ok);
-  font-weight: 700;
+.stage-row__fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width .4s ease;
 }
 
-.stage-list__item.is-current {
-  color: var(--text-1);
-  font-weight: 600;
+.stage-row.is-done .stage-row__name { color: var(--text-2); }
+.stage-row.is-done .stage-row__fill { background: var(--ok); }
+
+.stage-row.is-current .stage-row__name { color: var(--text-1); font-weight: 600; }
+.stage-row.is-current .stage-row__fill {
+  background: linear-gradient(90deg, var(--accent), #3d75e0);
 }
 
-.stage-list__item.is-current::before {
-  content: '●';
-  color: var(--accent);
-  font-size: 11px;
-  top: 1px;
-}
-
-.stage-list__pct {
+.stage-row__pct {
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
-  font-weight: 600;
+  text-align: right;
+  color: var(--text-3);
 }
+
+.stage-row.is-current .stage-row__pct { color: var(--accent); font-weight: 600; }
+.stage-row.is-done .stage-row__pct { color: var(--ok); font-weight: 600; }
+
+.stage-row__time {
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-3);
+}
+
+.stage-row.is-done .stage-row__time { color: var(--text-2); }
+.stage-row__time.is-live { color: var(--accent); font-weight: 600; }
