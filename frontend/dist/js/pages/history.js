@@ -16,7 +16,8 @@
 import { listHistory, undoGroup, getGroup } from '../api.js';
 import { toast, fmtNumber, fmtDateTime } from '../util.js';
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [20, 50, 100, 200];
+const DEFAULT_PAGE_SIZE = 20;
 
 export function renderHistory(container) {
   const section = document.createElement('section');
@@ -27,6 +28,7 @@ export function renderHistory(container) {
   let busy = false;
   let offset = 0;
   let total = 0;
+  let pageSize = DEFAULT_PAGE_SIZE;
   let decisions = [];
   const expanded = new Set(); // 已展开（或已加载缩略图）的 group_id
 
@@ -36,7 +38,7 @@ export function renderHistory(container) {
   });
 
   async function load() {
-    const data = await listHistory({ offset, limit: PAGE_SIZE });
+    const data = await listHistory({ offset, limit: pageSize });
     if (disposed) return;
     decisions = data.decisions || [];
     total = data.total || 0;
@@ -52,7 +54,7 @@ export function renderHistory(container) {
       await load();
       if (disposed) return;
       if (!decisions.length && offset > 0) {
-        offset = Math.max(0, offset - PAGE_SIZE);
+        offset = Math.max(0, offset - pageSize);
         await load();
         if (disposed) return;
       }
@@ -166,13 +168,13 @@ export function renderHistory(container) {
     status.className = `badge badge--status-${d.group_status || 'decided'}`;
     status.textContent = statusText(d.group_status);
 
+    let autoBadge = null;
     if (d.source === 'auto') {
-      const autoBadge = document.createElement('span');
+      autoBadge = document.createElement('span');
       autoBadge.className = 'badge badge--auto';
       autoBadge.dataset.testid = 'auto-badge';
       autoBadge.textContent = '自动';
       autoBadge.title = '流水线自动去重（三哈希全同），规则处理非偏好';
-      status.after(autoBadge);
     }
 
     const kept = document.createElement('span');
@@ -197,7 +199,12 @@ export function renderHistory(container) {
       : Number(d.moved_files) || 0;
     moved.textContent = movedCount > 0 ? `${movedCount} 个文件已移` : '未移动文件';
 
-    main.append(toggle, groupLink, status, kept, time, moved);
+    // autoBadge (if any) renders right after the group status badge
+    if (autoBadge) {
+      main.append(toggle, groupLink, status, autoBadge, kept, time, moved);
+    } else {
+      main.append(toggle, groupLink, status, kept, time, moved);
+    }
 
     // 右侧状态区：已撤销徽章 / 撤销按钮
     const right = document.createElement('span');
@@ -337,36 +344,110 @@ export function renderHistory(container) {
 
   /* ---------- 分页 ---------- */
 
+  function totalPages() {
+    return Math.max(1, Math.ceil(total / pageSize));
+  }
+
+  function gotoPage(page) {
+    const p = Math.min(Math.max(1, page), totalPages());
+    offset = (p - 1) * pageSize;
+    buildLoading();
+    load().catch((e) => {
+      if (!disposed) buildError(e);
+    });
+  }
+
   function buildPager() {
-    const page = Math.floor(offset / PAGE_SIZE) + 1;
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const page = Math.floor(offset / pageSize) + 1;
+    const pages = totalPages();
     const from = total === 0 ? 0 : offset + 1;
     const to = Math.min(offset + decisions.length, total);
 
     const pager = document.createElement('nav');
     pager.className = 'pager';
     pager.dataset.testid = 'history-pager';
-    pager.innerHTML = `
-      <button type="button" class="btn btn--pager" data-testid="pager-prev" ${offset === 0 ? 'disabled' : ''}>上一页</button>
-      <span class="pager__info" data-testid="pager-info"></span>
-      <button type="button" class="btn btn--pager" data-testid="pager-next" ${offset + PAGE_SIZE >= total ? 'disabled' : ''}>下一页</button>`;
-    pager.querySelector('[data-testid="pager-info"]').textContent =
-      `第 ${page}/${pages} 页 · ${fmtNumber(from)}–${fmtNumber(to)} / ${fmtNumber(total)} 条`;
 
-    pager.querySelector('[data-testid="pager-prev"]').addEventListener('click', () => {
-      offset = Math.max(0, offset - PAGE_SIZE);
+    // 每页展示条数：切换后回到第 1 页
+    const sizeSel = document.createElement('select');
+    sizeSel.className = 'pager__page-size';
+    sizeSel.dataset.testid = 'page-size';
+    sizeSel.setAttribute('aria-label', '每页展示条数');
+    for (const n of PAGE_SIZE_OPTIONS) {
+      const opt = document.createElement('option');
+      opt.value = String(n);
+      opt.textContent = `每页 ${n} 条`;
+      if (n === pageSize) opt.selected = true;
+      sizeSel.appendChild(opt);
+    }
+    sizeSel.addEventListener('change', () => {
+      const n = Number(sizeSel.value) || DEFAULT_PAGE_SIZE;
+      if (n === pageSize) return;
+      pageSize = n;
+      offset = 0;
       buildLoading();
       load().catch((e) => {
         if (!disposed) buildError(e);
       });
     });
-    pager.querySelector('[data-testid="pager-next"]').addEventListener('click', () => {
-      if (offset + PAGE_SIZE < total) offset += PAGE_SIZE;
-      buildLoading();
-      load().catch((e) => {
-        if (!disposed) buildError(e);
-      });
+    pager.appendChild(sizeSel);
+
+    const prev = document.createElement('button');
+    prev.type = 'button';
+    prev.className = 'btn btn--pager';
+    prev.dataset.testid = 'pager-prev';
+    prev.textContent = '上一页';
+    prev.disabled = offset === 0;
+    prev.addEventListener('click', () => gotoPage(page - 1));
+    pager.appendChild(prev);
+
+    const info = document.createElement('span');
+    info.className = 'pager__info';
+    info.dataset.testid = 'pager-info';
+    info.textContent =
+      `第 ${page}/${pages} 页 · ${fmtNumber(from)}–${fmtNumber(to)} / ${fmtNumber(total)} 条`;
+    pager.appendChild(info);
+
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.className = 'btn btn--pager';
+    next.dataset.testid = 'pager-next';
+    next.textContent = '下一页';
+    next.disabled = offset + pageSize >= total;
+    next.addEventListener('click', () => gotoPage(page + 1));
+    pager.appendChild(next);
+
+    // 直接跳转到第几页
+    const jump = document.createElement('span');
+    jump.className = 'pager__jump';
+    const jumpInput = document.createElement('input');
+    jumpInput.type = 'number';
+    jumpInput.min = '1';
+    jumpInput.max = String(pages);
+    jumpInput.value = String(page);
+    jumpInput.dataset.testid = 'jump-page';
+    jumpInput.setAttribute('aria-label', '跳转到第几页');
+    jump.appendChild(jumpInput);
+    const jumpBtn = document.createElement('button');
+    jumpBtn.type = 'button';
+    jumpBtn.className = 'btn btn--pager';
+    jumpBtn.dataset.testid = 'jump-btn';
+    jumpBtn.textContent = '跳转';
+    const doJump = () => {
+      const p = parseInt(jumpInput.value, 10);
+      if (!Number.isFinite(p)) return;
+      jumpInput.value = String(p);
+      gotoPage(p);
+    };
+    jumpBtn.addEventListener('click', doJump);
+    jumpInput.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        doJump();
+      }
     });
+    jump.appendChild(jumpBtn);
+    pager.appendChild(jump);
+
     return pager;
   }
 
