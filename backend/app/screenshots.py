@@ -42,6 +42,20 @@ _MIN_SHORT_EDGE = 720
 
 _WHEN_FILTERS = ("all", "30d", "2025", "older")
 
+# A photo counts as rejected when its group has a decision that was
+# applied (applied_at set; undo clears it) whose kept list does not
+# include it — bulk screenshot rejection and ordinary group decisions
+# both land here. Dismiss rows (kept NULL) and undone decisions leave
+# the photo visible again.
+_NOT_REJECTED = (
+    " AND NOT EXISTS ("
+    "   SELECT 1 FROM decisions d"
+    "   WHERE d.group_id = p.group_id AND d.applied_at IS NOT NULL"
+    "     AND d.kept_photo_ids IS NOT NULL"
+    "     AND NOT EXISTS (SELECT 1 FROM json_each(d.kept_photo_ids) je"
+    "                     WHERE je.value = p.id))"
+)
+
 
 def _open_size(path: str):
     """Lazy (width, height) via PIL header read; None when unreadable."""
@@ -143,12 +157,12 @@ def list_screenshots(
     total = conn.execute(
         "SELECT COUNT(*) FROM photos p"
         " JOIN files f ON f.id = p.primary_file_id"
-        " WHERE p.is_screenshot = 1" + cond).fetchone()[0]
+        " WHERE p.is_screenshot = 1" + cond + _NOT_REJECTED).fetchone()[0]
     rows = conn.execute(
         "SELECT p.id AS pid, f.id AS fid, f.path, f.format, f.width,"
         "       f.height, f.camera, f.captured_at, f.size"
         " FROM photos p JOIN files f ON f.id = p.primary_file_id"
-        " WHERE p.is_screenshot = 1" + cond +
+        " WHERE p.is_screenshot = 1" + cond + _NOT_REJECTED +
         " ORDER BY f.captured_at DESC, p.id DESC LIMIT ? OFFSET ?",
         params + [limit, offset]).fetchall()
 
@@ -175,16 +189,17 @@ def list_screenshots(
 
 def _stats(conn: sqlite3.Connection) -> dict:
     total_photos = conn.execute(
-        "SELECT COUNT(*) FROM photos WHERE is_screenshot = 1").fetchone()[0]
+        "SELECT COUNT(*) FROM photos p WHERE p.is_screenshot = 1"
+        + _NOT_REJECTED).fetchone()[0]
     all_photos = conn.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
     bytes_total = conn.execute(
         "SELECT COALESCE(SUM(f.size), 0) FROM photos p"
         " JOIN files f ON f.id = p.primary_file_id"
-        " WHERE p.is_screenshot = 1").fetchone()[0]
+        " WHERE p.is_screenshot = 1" + _NOT_REJECTED).fetchone()[0]
     latest = conn.execute(
         "SELECT MAX(f.captured_at) FROM photos p"
         " JOIN files f ON f.id = p.primary_file_id"
-        " WHERE p.is_screenshot = 1").fetchone()[0]
+        " WHERE p.is_screenshot = 1" + _NOT_REJECTED).fetchone()[0]
     return {
         "screenshots": total_photos,
         "percent": round(100.0 * total_photos / all_photos, 1) if all_photos else 0,

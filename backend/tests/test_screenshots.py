@@ -176,3 +176,35 @@ def test_reject_rejects_non_screenshots(sconn):
         screenshots.reject_screenshots(conn, [pid])
     with pytest.raises(ValueError):
         screenshots.reject_screenshots(conn, [])
+
+
+def test_list_excludes_rejected_and_returns_after_undo(sconn, monkeypatch):
+    conn, tmp = sconn
+    src = tmp / "src"
+    _mk_png(src / "a.png", 1170, 2532)
+    _mk_png(src / "b.png", 1080, 2340)
+    pid_a, _, _ = _add_file(
+        conn, src, "a.png", "png", captured="2025-06-01T10:00:00")
+    pid_b, _, _ = _add_file(
+        conn, src, "b.png", "png", captured="2025-06-02T10:00:00")
+    conn.commit()
+    screenshots.ensure_analyzed(conn)
+
+    rejected = tmp / "rej"
+    monkeypatch.setattr(executor, "rejected_dir_for",
+                        lambda c, p: str(rejected))
+    result = screenshots.reject_screenshots(conn, [pid_b])
+
+    # after rejection the list no longer shows the rejected photo
+    data = screenshots.list_screenshots(conn)
+    assert data["total"] == 1
+    assert [it["photo_id"] for it in data["items"]] == [pid_a]
+    assert data["stats"]["screenshots"] == 1
+    assert data["stats"]["latest"] == "2025-06-01T10:00:00"
+
+    # undo brings it back into the list (file restored as well)
+    executor.undo_group(conn, result["group_id"])
+    data = screenshots.list_screenshots(conn)
+    assert data["total"] == 2
+    assert {it["photo_id"] for it in data["items"]} == {pid_a, pid_b}
+    assert data["stats"]["screenshots"] == 2
