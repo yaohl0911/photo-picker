@@ -509,6 +509,15 @@ export function renderCompare(container) {
   }
 
   function buildError(err) {
+    const status = err && err.status;
+    if (status === 404) {
+      // 组已不存在：流水线重建会解散无决策历史的 pending 组，旧链接失效。
+      // 清掉 id 走默认路径（自动跳第一个待决策组），保持决策流不中断。
+      toast('该组已不存在（可能被流水线重建），已跳到下一个待决策组', { kind: 'warn' });
+      pendingIdsCache = null; // 组列表已过期，强制重拉
+      location.replace('#/compare');
+      return;
+    }
     section.innerHTML = `
       <div class="empty-state" data-testid="load-error">
         <div class="empty-state__icon" aria-hidden="true">⚠️</div>
