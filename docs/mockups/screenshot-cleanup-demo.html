@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>截图清理 · 体验演示</title>
+<style>
+  :root {
+    --accent: #2563eb; --ok: #178a58; --warn: #c0392b;
+    --text-1: #111827; --text-2: #4b5563; --text-3: #9ca3af;
+    --line: #e5e7eb; --surface: #fff; --surface-soft: #f8fafc;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font: 14px/1.6 -apple-system, "PingFang SC", sans-serif;
+    background: #f1f5f9; color: var(--text-1); padding: 28px;
+    max-width: 1080px; margin: 0 auto;
+  }
+  .demo-note {
+    background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+    border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-bottom: 18px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: var(--text-2); margin-bottom: 18px; }
+  .stats { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 16px;
+  }
+  .stat b { font-size: 20px; color: var(--accent); display: block; }
+  .stat span { font-size: 12px; color: var(--text-2); }
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; margin-bottom: 14px;
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 10px 14px; flex-wrap: wrap;
+  }
+  .chip {
+    border: 1px solid var(--line); background: var(--surface);
+    border-radius: 999px; padding: 4px 14px; font-size: 13px;
+    cursor: pointer; color: var(--text-2);
+  }
+  .chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .toolbar .spacer { flex: 1; }
+  .btn {
+    border: none; border-radius: 8px; padding: 7px 18px; font-size: 13px;
+    cursor: pointer; background: var(--surface-soft); color: var(--text-1);
+    border: 1px solid var(--line);
+  }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px; margin-bottom: 90px;
+  }
+  .card {
+    background: var(--surface); border: 2px solid transparent;
+    border-radius: 10px; overflow: hidden; cursor: pointer; position: relative;
+    transition: border-color .12s, transform .12s;
+  }
+  .card.sel { border-color: var(--accent); }
+  .card.sel .check { display: flex; }
+  .check {
+    display: none; position: absolute; top: 8px; right: 8px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: #fff; align-items: center;
+    justify-content: center; font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  }
+  .shot { width: 100%; aspect-ratio: 117/253; display: block; }
+  .shot .bar { height: 7%; background: rgba(0,0,0,.85); }
+  .shot .content { height: 93%; padding: 10% 7%; display: flex; gap: 5%; }
+  .shot .side { flex: 1.2; background: rgba(255,255,255,.5); border-radius: 3px; }
+  .shot .main { flex: 2; display: flex; flex-direction: column; gap: 8%; }
+  .shot .main div { background: rgba(255,255,255,.4); border-radius: 3px; flex: 1; }
+  .s1 { background: linear-gradient(180deg, #dfe7f3, #c3d0e8); }
+  .s2 { background: linear-gradient(180deg, #f5e3d3, #ecd0b8); }
+  .s3 { background: linear-gradient(180deg, #dcf0e2, #c2e5cf); }
+  .s4 { background: linear-gradient(180deg, #f3e0e6, #e9c8d3); }
+  .s5 { background: linear-gradient(180deg, #e4e0f2, #d0c9e8); }
+  .s6 { background: linear-gradient(180deg, #e8e2d6, #d9d0bd); }
+  .meta { padding: 8px 10px; }
+  .meta .name { font-size: 12px; font-weight: 600; }
+  .meta .dims { font-size: 11px; color: var(--text-3); margin-top: 1px; }
+  .why {
+    display: inline-block; font-size: 10.5px; margin-top: 5px;
+    background: var(--surface-soft); color: var(--text-2);
+    border-radius: 4px; padding: 1px 6px;
+  }
+  .actionbar {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: #111827; color: #fff; border-radius: 12px;
+    padding: 12px 18px; display: flex; gap: 14px; align-items: center;
+    box-shadow: 0 8px 30px rgba(0,0,0,.35); width: min(680px, 92vw);
+  }
+  .actionbar .count { font-size: 14px; }
+  .actionbar .count b { color: #93c5fd; }
+  .actionbar .spacer { flex: 1; }
+  .actionbar .btn-reject {
+    background: var(--warn); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 20px; font-size: 13px; cursor: pointer;
+  }
+  .actionbar .note { font-size: 11px; color: #9ca3af; }
+  .toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    background: #062e20; color: #a7f3d0; padding: 10px 22px;
+    border-radius: 999px; font-size: 13px; opacity: 0;
+    transition: opacity .25s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+  .empty { display: none; text-align: center; color: var(--text-3); padding: 60px 0; }
+</style>
+</head>
+<body>
+  <div class="demo-note">⚠️ 体验演示（模拟数据）：点卡片勾选/取消，底部条随动，「批量淘汰」会播放真实交互效果。</div>
+  <h1>截图清理</h1>
+  <p class="subtitle">自动识别疑似截图（屏幕比例 + 无相机信息），集中勾选、一键淘汰。</p>
+
+  <div class="stats">
+    <div class="stat"><b>1,284</b><span>疑似截图</span></div>
+    <div class="stat"><b>15%</b><span>占图库比例</span></div>
+    <div class="stat"><b>62%</b><span>可释放空间</span></div>
+    <div class="stat"><b>2026-10-31</b><span>最近一张</span></div>
+  </div>
+
+  <div class="toolbar">
+    <button class="chip on" data-q="all">全部</button>
+    <button class="chip" data-q="30d">最近 30 天</button>
+    <button class="chip" data-q="2025">2025 年</button>
+    <button class="chip" data-q="older">更早</button>
+    <span class="spacer"></span>
+    <button class="btn" id="sel-all">全选</button>
+    <button class="btn" id="sel-none">全不选</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty">该筛选下没有截图 🎉</div>
+
+  <div class="actionbar" id="bar" style="display:none">
+    <span class="count">已选 <b id="n">0</b> 张</span>
+    <button class="btn-reject" id="reject">批量淘汰</button>
+    <span class="note">淘汰 = 移入 _photo_picker_rejected，可撤销，不真删</span>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+  var NAMES = ['IMG_2314.PNG','微信图片_20260901.png','Screenshot_2026-10-31-09-12-33.png',
+    'IMG_5207.HEIC','Screenshot_2026-10-02-14-02-11.png','IMG_0199.PNG',
+    'Screenshot_2025-11-20-08-44-05.png','Screenshot_2025-10-03-19-23-46.png',
+    'IMG_5198.HEIC','Screenshot_2026-09-28-22-18-40.png','IMG_2315.PNG',
+    'Screenshot_2025-08-15-12-00-31.png'];
+  var DIMS = ['1170×2532','1170×2532','1080×2340','1170×2532','1170×2532',
+    '1170×2532','1080×2340','1080×2340','1170×2532','1170×2532','1170×2532','1080×2340'];
+  var WHYS = ['屏幕比例 · 无相机 EXIF','屏幕比例 · 无相机 EXIF','华为截图尺寸',
+    '屏幕比例 · 无相机 EXIF','屏幕比例 · 无相机 EXIF','屏幕比例 · 无相机 EXIF',
+    '华为截图尺寸','华为截图尺寸','屏幕比例 · 无相机 EXIF','屏幕比例 · 无相机 EXIF',
+    '屏幕比例 · 无相机 EXIF','华为截图尺寸'];
+  var GROUPS = ['30d','30d','30d','30d','30d','30d','2025','2025','30d','30d','30d','older'];
+  var grid = document.getElementById('grid');
+  var selected = new Set();
+  var filter = 'all';
+  var killed = new Set();
+
+  function render() {
+    grid.replaceChildren();
+    var shown = 0;
+    NAMES.forEach(function (name, i) {
+      if (killed.has(i)) return;
+      if (filter !== 'all' && GROUPS[i] !== filter) return;
+      shown++;
+      var c = document.createElement('div');
+      c.className = 'card' + (selected.has(i) ? ' sel' : '');
+      c.innerHTML =
+        '<div class="check">✓</div>' +
+        '<div class="shot s' + (i % 6 + 1) + '"><div class="bar"></div>' +
+        '<div class="content"><div class="side"></div><div class="main">' +
+        '<div></div><div></div><div></div></div></div></div>' +
+        '<div class="meta"><div class="name">' + name + '</div>' +
+        '<div class="dims">' + DIMS[i] + '</div>' +
+        '<span class="why">' + WHYS[i] + '</span></div>';
+      c.addEventListener('click', function () {
+        if (selected.has(i)) { selected.delete(i); } else { selected.add(i); }
+        render();
+      });
+      grid.appendChild(c);
+    });
+    document.getElementById('empty').style.display = shown ? 'none' : 'block';
+    updateBar();
+  }
+
+  function updateBar() {
+    var bar = document.getElementById('bar');
+    var alive = Array.from(selected).filter(function (i) { return !killed.has(i); });
+    bar.style.display = alive.length ? 'flex' : 'none';
+    document.getElementById('n').textContent = alive.length;
+  }
+
+  document.querySelectorAll('.chip').forEach(function (ch) {
+    ch.addEventListener('click', function () {
+      document.querySelectorAll('.chip').forEach(function (c) { c.classList.remove('on'); });
+      ch.classList.add('on');
+      filter = ch.dataset.q;
+      render();
+    });
+  });
+  document.getElementById('sel-all').addEventListener('click', function () {
+    NAMES.forEach(function (n, i) {
+      if (!killed.has(i) && (filter === 'all' || GROUPS[i] === filter)) selected.add(i);
+    });
+    render();
+  });
+  document.getElementById('sel-none').addEventListener('click', function () {
+    selected.clear(); render();
+  });
+  document.getElementById('reject').addEventListener('click', function () {
+    var alive = Array.from(selected).filter(function (i) { return !killed.has(i); });
+    alive.forEach(function (i) { killed.add(i); });
+    selected.clear();
+    render();
+    var t = document.getElementById('toast');
+    t.textContent = '已淘汰 ' + alive.length + ' 张截图（可随时在决策历史中撤销）';
+    t.classList.add('show');
+    setTimeout(function () { t.classList.remove('show'); }, 2600);
+  });
+  render();
+</script>
+</body>
+</html>
