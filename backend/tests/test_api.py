@@ -702,3 +702,15 @@ def test_decide_group_moved_files_counts_live_photo_videos(scene):
 
     history = api.list_history(conn)
     assert history["decisions"][0]["moved_files"] == 3
+
+
+def test_get_group_decided_returns_kept_photo_ids(scene):
+    # pending groups: no decision row yet -> kept_photo_ids is None
+    data = api.get_group(scene["conn"], 1)
+    assert data["kept_photo_ids"] is None
+    # decide group 1 keeping photo 1, then re-read: the outcome is
+    # surfaced so the compare page can mark kept vs rejected cards
+    api.decide_group(scene["conn"], 1, [1], learn=False)
+    data = api.get_group(scene["conn"], 1)
+    assert data["status"] == "decided"
+    assert data["kept_photo_ids"] == [1]

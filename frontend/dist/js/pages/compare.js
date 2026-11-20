@@ -549,7 +549,15 @@ export function renderCompare(container) {
     section.replaceChildren();
 
     const recId = group.recommended_photo_id;
-    selected = new Set(recId != null ? [recId] : []);
+    // decided groups: preselect what the decision actually kept (falls
+    // back to the recommended photo for legacy rows without a decision)
+    const decidedKept = Array.isArray(group.kept_photo_ids)
+      ? group.kept_photo_ids : null;
+    if (decidedKept) {
+      selected = new Set(decidedKept);
+    } else {
+      selected = new Set(recId != null ? [recId] : []);
+    }
 
     // ---- 顶部 ----
     const top = document.createElement('header');
@@ -618,7 +626,8 @@ export function renderCompare(container) {
     const grid = document.createElement('div');
     grid.className = 'compare-grid';
     grid.dataset.testid = 'compare-grid';
-    photos.forEach((p, i) => grid.appendChild(buildCard(p, i)));
+    photos.forEach((p, i) =>
+      grid.appendChild(buildCard(p, i, decidedKept)));
     section.appendChild(grid);
 
     // ---- 吸底操作条 ----
@@ -719,7 +728,7 @@ export function renderCompare(container) {
 
   /* ---------- 照片卡 ---------- */
 
-  function buildCard(p, index) {
+  function buildCard(p, index, decidedKept) {
     const card = document.createElement('article');
     card.className = 'photo-card' + (p.is_recommended ? ' is-recommended' : '');
     card.dataset.photoId = String(p.photo_id);
@@ -733,12 +742,26 @@ export function renderCompare(container) {
     idxBadge.title = '按数字键可快速选中这张照片';
     idxBadge.textContent = String(index + 1);
     badges.appendChild(idxBadge);
-    if (p.is_recommended) {
+    if (p.is_recommended && (!decidedKept || decidedKept.length === 0)) {
       const recBadge = document.createElement('span');
       recBadge.className = 'badge badge--rec';
       recBadge.setAttribute('data-testid', 'rec-badge');
       recBadge.textContent = '★ 推荐';
       badges.appendChild(recBadge);
+    }
+    // decided group: show the actual decision outcome on each card
+    if (decidedKept && decidedKept.length > 0) {
+      const outcome = document.createElement('span');
+      if (decidedKept.includes(p.photo_id)) {
+        outcome.className = 'badge badge--kept';
+        outcome.dataset.testid = 'kept-badge';
+        outcome.textContent = '✓ 已保留';
+      } else {
+        outcome.className = 'badge badge--rejected';
+        outcome.dataset.testid = 'rejected-badge';
+        outcome.textContent = '已淘汰';
+      }
+      badges.appendChild(outcome);
     }
     const selBadge = document.createElement('span');
     selBadge.className = 'badge badge--sel';

@@ -8,6 +8,7 @@ import sqlite3
 import pytest
 
 from app.db import init_db, connect
+from app import db as db_mod
 from app import executor as executor_mod
 from app import auto_resolve
 
@@ -153,11 +154,15 @@ class TestAutoResolvePending:
         # tables exist only after its ensure_tables; absence is fine —
         # verify via the source column and status instead)
         row = conn.execute(
-            "SELECT d.source, d.kept_photo_ids, g.status FROM decisions d "
+            "SELECT d.source, d.kept_photo_ids, g.status, "
+            "g.recommended_photo_id FROM decisions d "
             "JOIN groups g ON g.id = d.group_id WHERE d.source = 'auto'"
         ).fetchone()
         assert row is not None
         assert json.loads(row["kept_photo_ids"]) == [keeper]
+        # the kept photo becomes the group's recommended photo so the
+        # compare page shows the decision outcome, not a fresh ranking
+        assert row["recommended_photo_id"] == keeper
         assert row["status"] == "decided"
         # the dropper's file moved; keeper stays
         moved = conn.execute(
@@ -224,3 +229,43 @@ class TestAutoResolvePending:
         assert report["resolved_groups"] == 0
         assert conn.execute(
             "SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 0
+
+
+class TestRecommendedBackfill:
+    def test_init_db_backfills_decided_groups_from_decisions(self, conn):
+        # legacy decided group with no recommended + a decision row:
+        # init_db must backfill recommended from kept_photo_ids[0]
+        gid = _mk_group(conn, "g1")
+        p1 = _add_photo(conn, "a.jpg", H, A, D, gid)
+        p2 = _add_photo(conn, "a(1).jpg", H, A, D, gid)
+        conn.execute(
+            "UPDATE groups SET recommended_photo_id = NULL, "
+            "status = 'decided' WHERE id = ?", (gid,))
+        conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at) "
+            "VALUES (?, ?, ?)", (gid, json.dumps([p1]), "2026-11-20T00:00:00"))
+        conn.commit()
+
+        db_mod.init_db(conn)
+
+        assert conn.execute(
+            "SELECT recommended_photo_id FROM groups WHERE id = ?",
+            (gid,)).fetchone()[0] == p1
+
+    def test_backfill_leaves_existing_recommendation_alone(self, conn):
+        gid = _mk_group(conn, "g1")
+        p1 = _add_photo(conn, "a.jpg", H, A, D, gid)
+        p2 = _add_photo(conn, "a(1).jpg", H, A, D, gid)
+        conn.execute(
+            "UPDATE groups SET recommended_photo_id = ?, "
+            "status = 'decided' WHERE id = ?", (p2, gid))
+        conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at) "
+            "VALUES (?, ?, ?)", (gid, json.dumps([p1]), "2026-11-20T00:00:00"))
+        conn.commit()
+
+        db_mod.init_db(conn)
+
+        assert conn.execute(
+            "SELECT recommended_photo_id FROM groups WHERE id = ?",
+            (gid,)).fetchone()[0] == p2

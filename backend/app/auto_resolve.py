@@ -176,6 +176,12 @@ def auto_resolve_pending(conn: sqlite3.Connection, progress_cb=None,
             keeper = pick_keeper(conn, cluster)
             decision_id = apply_decision(
                 conn, new_gid, [keeper], learn=False, source="auto")
+            # mirror the user-facing API contract: the kept photo becomes
+            # the group's recommended photo so decided groups opened from
+            # history show the actual outcome, not a fresh quality ranking
+            conn.execute(
+                "UPDATE groups SET recommended_photo_id = ? WHERE id = ?",
+                (keeper, new_gid))
             moved = conn.execute(
                 "SELECT COUNT(*) AS n FROM move_log WHERE decision_id = ?",
                 (decision_id,),

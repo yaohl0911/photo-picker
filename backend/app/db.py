@@ -140,11 +140,36 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     _ensure_column(conn, "decisions", "source",
                    "TEXT NOT NULL DEFAULT 'user'")
+    _backfill_recommended_for_decided(conn)
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
+
+
+def _backfill_recommended_for_decided(conn: sqlite3.Connection) -> None:
+    """One-time data fix: decided groups' recommended_photo_id.
+
+    Auto-resolve decisions written by executor directly (learn=False)
+    used to leave ``recommended_photo_id`` NULL, so opening such a group
+    in the compare view fell back to a fresh quality ranking and showed
+    a misleading "recommended" star on a photo that was actually
+    rejected. Backfill = first kept photo of the latest decision.
+    Idempotent: only touches rows still NULL.
+    """
+    conn.execute(
+        """
+        UPDATE groups SET recommended_photo_id = (
+            SELECT json_extract(d.kept_photo_ids, '$[0]')
+            FROM decisions d
+            WHERE d.group_id = groups.id
+              AND d.kept_photo_ids IS NOT NULL
+              AND json_array_length(d.kept_photo_ids) > 0
+            ORDER BY d.id DESC LIMIT 1)
+        WHERE status = 'decided' AND recommended_photo_id IS NULL
+        """
+    )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str,

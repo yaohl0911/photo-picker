@@ -216,6 +216,19 @@ def get_group(conn, group_id):
         raise KeyError("group {} 不存在".format(group_id))
     weights = effective_weights(conn)
     recommended, reason, ranked = _group_recommendation(conn, row, weights)
+    # For decided groups surface what the decision actually kept so the
+    # compare page can mark kept/rejected members instead of showing the
+    # (now meaningless) recommendation; None = not a decision outcome
+    kept_ids = None
+    if row["status"] != "pending":
+        dec_row = conn.execute(
+            "SELECT kept_photo_ids FROM decisions WHERE group_id = ?"
+            " ORDER BY id DESC LIMIT 1", (group_id,)).fetchone()
+        if dec_row is not None and dec_row["kept_photo_ids"] is not None:
+            try:
+                kept_ids = json.loads(dec_row["kept_photo_ids"])
+            except (TypeError, ValueError):
+                kept_ids = None
     photos = []
     by_rank = {pid: i for i, pid in enumerate(ranked)}
     photo_rows = sorted(_group_photo_rows(conn, group_id),
@@ -276,6 +289,7 @@ def get_group(conn, group_id):
         "recommended_photo_id": recommended,
         "reason": reason,
         "ranked": ranked,
+        "kept_photo_ids": kept_ids,
         "photos": photos,
     }
 
