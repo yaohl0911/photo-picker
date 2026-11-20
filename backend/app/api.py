@@ -456,10 +456,25 @@ def set_locked_api(conn, dims):
 
 # --- history -----------------------------------------------------------------
 
-def list_history(conn, offset=0, limit=50):
-    """Decision history, newest first."""
+_HISTORY_SOURCES = ("all", "user", "auto")
+
+
+def list_history(conn, offset=0, limit=50, source="all"):
+    """Decision history, newest first, optionally filtered by source.
+
+    ``source``: "all" (default) | "user" (manual decisions) | "auto"
+    (pipeline auto-resolved groups).
+    """
+    if source not in _HISTORY_SOURCES:
+        raise ValueError("source 必须是 all/user/auto 之一")
     _validate_paging(offset, limit)
-    total = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    where, params = "", []
+    if source == "auto":
+        where = " WHERE d.source = 'auto'"
+    elif source == "user":
+        where = " WHERE COALESCE(d.source, 'user') = 'user'"
+    total = conn.execute(
+        "SELECT COUNT(*) FROM decisions d" + where).fetchone()[0]
     rows = conn.execute(
         "SELECT d.id AS decision_id, d.group_id, g.status AS group_status,"
         "       d.kept_photo_ids, d.decided_at, d.applied_at, d.source,"
@@ -468,8 +483,9 @@ def list_history(conn, offset=0, limit=50):
         "        + (SELECT COUNT(*) FROM video_moves v"
         "            WHERE v.decision_id = d.id)) AS moved_files"
         " FROM decisions d JOIN groups g ON g.id = d.group_id"
+        + where +
         " ORDER BY d.id DESC LIMIT ? OFFSET ?",
-        (limit, offset),
+        params + [limit, offset],
     ).fetchall()
     decisions = []
     for r in rows:

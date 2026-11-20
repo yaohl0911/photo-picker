@@ -1683,6 +1683,41 @@ kbd {
   border: 1px solid #c7d2fe;
 }
 
+.badge--manual {
+  background: #f0fdf4;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+
+/* 历史页来源筛选 chips */
+.filter-chips {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.filter-chip {
+  border: 1px solid var(--line, #d9dee7);
+  background: var(--surface, #fff);
+  color: var(--text-2, #4b5563);
+  border-radius: 999px;
+  padding: 4px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+
+.filter-chip:hover {
+  border-color: var(--accent, #2563eb);
+  color: var(--accent, #2563eb);
+}
+
+.filter-chip--active {
+  background: var(--accent, #2563eb);
+  border-color: var(--accent, #2563eb);
+  color: #fff;
+}
+
 /* 对比页已决策组的结果徽章 */
 .badge--kept {
   background: #e8f6ef;

@@ -29,6 +29,7 @@ export function renderHistory(container) {
   let offset = 0;
   let total = 0;
   let pageSize = DEFAULT_PAGE_SIZE;
+  let sourceFilter = 'all'; // all | user | auto
   let decisions = [];
   const expanded = new Set(); // 已展开（或已加载缩略图）的 group_id
 
@@ -38,7 +39,8 @@ export function renderHistory(container) {
   });
 
   async function load() {
-    const data = await listHistory({ offset, limit: pageSize });
+    const data = await listHistory({
+      offset, limit: pageSize, source: sourceFilter });
     if (disposed) return;
     decisions = data.decisions || [];
     total = data.total || 0;
@@ -106,6 +108,33 @@ export function renderHistory(container) {
     head.querySelector('[data-testid="history-total"]').textContent =
       `共 ${fmtNumber(total)} 条决策`;
     section.appendChild(head);
+
+    // ---- 来源筛选 ----
+    const filters = document.createElement('div');
+    filters.className = 'filter-chips';
+    filters.dataset.testid = 'source-filter';
+    const FILTERS = [
+      { value: 'all', label: '全部' },
+      { value: 'user', label: '手动' },
+      { value: 'auto', label: '自动' },
+    ];
+    for (const f of FILTERS) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'filter-chip'
+        + (sourceFilter === f.value ? ' filter-chip--active' : '');
+      chip.dataset.value = f.value;
+      chip.textContent = f.label;
+      chip.addEventListener('click', () => {
+        if (sourceFilter === f.value || busy) return;
+        sourceFilter = f.value;
+        offset = 0;
+        buildLoading();
+        load().catch((err) => { if (!disposed) buildError(err); });
+      });
+      filters.appendChild(chip);
+    }
+    section.appendChild(filters);
 
     // ---- 空态 ----
     if (!decisions.length) {
@@ -175,6 +204,12 @@ export function renderHistory(container) {
       autoBadge.dataset.testid = 'auto-badge';
       autoBadge.textContent = '自动';
       autoBadge.title = '流水线自动去重（三哈希全同），规则处理非偏好';
+    } else {
+      autoBadge = document.createElement('span');
+      autoBadge.className = 'badge badge--manual';
+      autoBadge.dataset.testid = 'manual-badge';
+      autoBadge.textContent = '手动';
+      autoBadge.title = '你自己在对比页作出的决策';
     }
 
     const kept = document.createElement('span');

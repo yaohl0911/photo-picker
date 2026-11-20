@@ -91,8 +91,8 @@ export const updateLockedDims = (dims) =>
 
 // --- 历史 -------------------------------------------------------------------
 
-export const listHistory = ({ offset = 0, limit = 50 } = {}) =>
-  request(`/api/history?offset=${offset}&limit=${limit}`);
+export const listHistory = ({ offset = 0, limit = 50, source = 'all' } = {}) =>
+  request(`/api/history?offset=${offset}&limit=${limit}&source=${source}`);
 
 // --- 设置 ---------------------------------------------------------------------
 

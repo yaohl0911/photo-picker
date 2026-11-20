@@ -714,3 +714,26 @@ def test_get_group_decided_returns_kept_photo_ids(scene):
     data = api.get_group(scene["conn"], 1)
     assert data["status"] == "decided"
     assert data["kept_photo_ids"] == [1]
+
+
+def test_list_history_source_filter(scene):
+    conn = scene["conn"]
+    # auto decision on group 2
+    from app import executor
+    executor.apply_decision(conn, 2, [5], learn=False, source="auto")
+    # manual decision on group 1 (default source)
+    api.decide_group(conn, 1, [1], learn=False)
+
+    all_rows = api.list_history(conn)
+    assert all_rows["total"] == 2
+
+    manual = api.list_history(conn, source="user")
+    assert manual["total"] == 1
+    assert manual["decisions"][0]["source"] == "user"
+
+    auto = api.list_history(conn, source="auto")
+    assert auto["total"] == 1
+    assert auto["decisions"][0]["source"] == "auto"
+
+    with pytest.raises(ValueError):
+        api.list_history(conn, source="bogus")

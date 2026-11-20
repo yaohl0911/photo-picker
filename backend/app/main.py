@@ -193,9 +193,11 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     def history(
         offset: int = Query(0, ge=0),
         limit: int = Query(50, ge=1, le=500),
+        source: str = Query("all"),
         conn: sqlite3.Connection = Depends(get_conn),
     ):
-        return api.list_history(conn, offset=offset, limit=limit)
+        return api.list_history(
+            conn, offset=offset, limit=limit, source=source)
 
     # --- settings ---------------------------------------------------------------
 
