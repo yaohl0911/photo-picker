@@ -511,6 +511,21 @@ def list_history(conn, offset=0, limit=50, source="all"):
             "limit": limit}
 
 
+# --- screenshots ---------------------------------------------------------------
+
+def get_screenshots(conn, offset=0, limit=60, when="all"):
+    """Paged screenshot list (lazy analysis on first call)."""
+    from app import screenshots as screenshots_mod
+    return screenshots_mod.list_screenshots(
+        conn, offset=offset, limit=limit, when=when)
+
+
+def reject_screenshots(conn, photo_ids):
+    """Bulk-reject screenshot photos via the decision pipeline."""
+    from app import screenshots as screenshots_mod
+    return screenshots_mod.reject_screenshots(conn, photo_ids)
+
+
 # --- settings -----------------------------------------------------------------
 
 def get_settings(conn):

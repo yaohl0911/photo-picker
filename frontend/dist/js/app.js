@@ -11,10 +11,12 @@ import { renderCompare } from './pages/compare.js';
 import { renderPreferences } from './pages/preferences.js';
 import { renderHistory } from './pages/history.js';
 import { renderSettings } from './pages/settings.js';
+import { renderScreenshots } from './pages/screenshots.js';
 
 const ROUTES = {
   overview: { label: '总览', render: renderOverview },
   compare: { label: '对比决策', render: renderCompare },
+  screenshots: { label: '截图清理', render: renderScreenshots },
   preferences: { label: '偏好', render: renderPreferences },
   history: { label: '历史', render: renderHistory },
   settings: { label: '设置', render: renderSettings },

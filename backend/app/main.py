@@ -217,6 +217,23 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                 conn: sqlite3.Connection = Depends(get_conn)):
         return api.list_dirs(conn, path)
 
+    # --- screenshots ------------------------------------------------------------
+
+    @app.get("/api/screenshots")
+    def screenshots(
+        offset: int = Query(0, ge=0),
+        limit: int = Query(60, ge=1, le=500),
+        when: str = Query("all"),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ):
+        return api.get_screenshots(conn, offset=offset, limit=limit, when=when)
+
+    @app.post("/api/screenshots/reject")
+    def screenshots_reject(payload: dict = Body(...),
+                           conn: sqlite3.Connection = Depends(get_conn)):
+        photo_ids = payload.get("photo_ids")
+        return api.reject_screenshots(conn, photo_ids)
+
     # --- jobs / scan / pipeline -----------------------------------------------
 
     @app.post("/api/scan")

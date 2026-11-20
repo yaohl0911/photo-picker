@@ -94,6 +94,19 @@ export const updateLockedDims = (dims) =>
 export const listHistory = ({ offset = 0, limit = 50, source = 'all' } = {}) =>
   request(`/api/history?offset=${offset}&limit=${limit}&source=${source}`);
 
+// --- 截图清理 -----------------------------------------------------------------
+
+/** 截图列表（懒分析：首次调用触发全库识别）。 */
+export const getScreenshots = ({ offset = 0, limit = 60, when = 'all' } = {}) =>
+  request(`/api/screenshots?offset=${offset}&limit=${limit}&when=${when}`);
+
+/** 批量淘汰截图（走正常决策管线，可撤销）。 */
+export const rejectScreenshots = (photoIds) =>
+  request('/api/screenshots/reject', {
+    method: 'POST',
+    body: { photo_ids: photoIds },
+  });
+
 // --- 设置 ---------------------------------------------------------------------
 
 /** 当前服务端设置（源目录 / 淘汰目录 / 相似判定阈值），设置页服务端优先加载用。 */

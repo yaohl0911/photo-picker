@@ -76,6 +76,20 @@ export function renderOverview(container) {
         chip.append(v, l);
         return chip;
       }),
+      (() => {
+        const link = document.createElement('a');
+        link.className = 'stat-chip stat-chip--link';
+        link.href = '#/screenshots';
+        link.dataset.testid = 'ss-entry';
+        const v = document.createElement('span');
+        v.className = 'stat-chip__value';
+        v.textContent = '去筛选';
+        const l = document.createElement('span');
+        l.className = 'stat-chip__label';
+        l.textContent = '截图清理';
+        link.append(v, l);
+        return link;
+      })(),
     );
     // 喂 tab 徽章
     const counts = {
