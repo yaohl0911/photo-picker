@@ -111,3 +111,117 @@ def test_schema_version_recorded_in_meta(db):
     row = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
     assert row is not None
     assert int(row["value"]) == SCHEMA_VERSION
+
+
+class TestGhostAutoDecisionPurge:
+    def _mk_group_photo(self, conn, name, gid=None):
+        cur = conn.execute(
+            "INSERT INTO files (path, mtime, size, format)"
+            " VALUES (?, 1.0, 8, 'jpg')", (f"/x/{name}",))
+        fid = cur.lastrowid
+        cur = conn.execute(
+            "INSERT INTO photos (primary_file_id, group_id) VALUES (?, ?)",
+            (fid, gid))
+        pid = cur.lastrowid
+        conn.execute(
+            "UPDATE files SET photo_id = ? WHERE id = ?", (pid, fid))
+        return pid
+
+    def test_ghost_auto_decision_removed_with_group(self, tmp_path):
+        conn = connect(str(tmp_path / "t.db"))
+        init_db(conn)
+        cur = conn.execute(
+            "INSERT INTO groups (status, created_at)"
+            " VALUES ('decided', '2026-11-20T00:00:00')")
+        gid = cur.lastrowid
+        pid = self._mk_group_photo(conn, "keeper.jpg", gid)
+        conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at,"
+            " source) VALUES (?, ?, ?, 'auto')",
+            (gid, f"[{pid}]", "2026-11-20T00:00:01"))
+        conn.commit()
+
+        init_db(conn)  # migration runs
+
+        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM groups WHERE id = ?", (gid,)
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT group_id FROM photos WHERE id = ?", (pid,)
+        ).fetchone()[0] is None
+
+    def test_auto_decision_with_moves_is_kept(self, tmp_path):
+        conn = connect(str(tmp_path / "t.db"))
+        init_db(conn)
+        cur = conn.execute(
+            "INSERT INTO groups (status, created_at)"
+            " VALUES ('decided', '2026-11-20T00:00:00')")
+        gid = cur.lastrowid
+        pid = self._mk_group_photo(conn, "keeper.jpg", gid)
+        cur = conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at,"
+            " source) VALUES (?, ?, ?, 'auto')",
+            (gid, f"[{pid}]", "2026-11-20T00:00:01"))
+        did = cur.lastrowid
+        conn.execute(
+            "INSERT INTO move_log (decision_id, file_id, src_path, dst_path,"
+            " moved_at, undone) VALUES (?, NULL, '/a.jpg', '/b.jpg',"
+            " '2026-11-20T00:00:02', 0)", (did,))
+        conn.commit()
+
+        init_db(conn)
+
+        assert conn.execute(
+            "SELECT COUNT(*) FROM decisions WHERE id = ?", (did,)
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM groups WHERE id = ?", (gid,)
+        ).fetchone()[0] == 1
+
+    def test_group_with_second_decision_keeps_group(self, tmp_path):
+        # the group also has a manual decision: only the ghost auto row
+        # disappears, the group (still owned by the manual decision) stays
+        conn = connect(str(tmp_path / "t.db"))
+        init_db(conn)
+        cur = conn.execute(
+            "INSERT INTO groups (status, created_at)"
+            " VALUES ('decided', '2026-11-20T00:00:00')")
+        gid = cur.lastrowid
+        pid = self._mk_group_photo(conn, "keeper.jpg", gid)
+        conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at,"
+            " source) VALUES (?, ?, ?, 'auto')",
+            (gid, f"[{pid}]", "2026-11-20T00:00:01"))
+        cur = conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at)"
+            " VALUES (?, ?, '2026-11-20T00:05:00')", (gid, f"[{pid}]"))
+        manual_id = cur.lastrowid
+        conn.commit()
+
+        init_db(conn)
+
+        rows = conn.execute("SELECT id FROM decisions").fetchall()
+        assert [r[0] for r in rows] == [manual_id]
+        assert conn.execute(
+            "SELECT COUNT(*) FROM groups WHERE id = ?", (gid,)
+        ).fetchone()[0] == 1
+
+    def test_manual_zero_move_decision_is_kept(self, tmp_path):
+        # the noise rule only applies to auto rows: manual decisions are
+        # always real user intent and stay in history
+        conn = connect(str(tmp_path / "t.db"))
+        init_db(conn)
+        cur = conn.execute(
+            "INSERT INTO groups (status, created_at)"
+            " VALUES ('decided', '2026-11-20T00:00:00')")
+        gid = cur.lastrowid
+        pid = self._mk_group_photo(conn, "keeper.jpg", gid)
+        conn.execute(
+            "INSERT INTO decisions (group_id, kept_photo_ids, decided_at)"
+            " VALUES (?, ?, '2026-11-20T00:00:01')", (gid, f"[{pid}]"))
+        conn.commit()
+
+        init_db(conn)
+
+        assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1

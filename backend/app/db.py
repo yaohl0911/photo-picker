@@ -141,11 +141,55 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "decisions", "source",
                    "TEXT NOT NULL DEFAULT 'user'")
     _backfill_recommended_for_decided(conn)
+    _purge_ghost_auto_decisions(conn)
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
+
+
+def _purge_ghost_auto_decisions(conn: sqlite3.Connection) -> None:
+    """Remove phantom auto decisions that never moved a single file.
+
+    Before row-purge existed, auto-resolve "executed" on photos whose
+    files the user had already deleted outside the app: decisions with
+    moved_files = 0 and, after the row purge, groups holding at most the
+    keeper. Those history rows are pure noise (nothing was ever moved,
+    nothing to undo) — drop the decision row and dissolve the leftover
+    single-member group. Rows with a move/video_moves entry (real work)
+    or sharing the group with another decision are kept.
+    """
+    rows = conn.execute(
+        """
+        SELECT d.id AS did, d.group_id AS gid FROM decisions d
+        WHERE d.source = 'auto'
+          AND NOT EXISTS (SELECT 1 FROM move_log m
+                          WHERE m.decision_id = d.id)
+          AND NOT EXISTS (SELECT 1 FROM video_moves v
+                          WHERE v.decision_id = d.id)
+          AND (SELECT COUNT(*) FROM photos p
+               WHERE p.group_id = d.group_id) <= 1
+        """
+    ).fetchall()
+    has_samples = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+        " AND name = 'preference_samples'").fetchone()
+    for r in rows:
+        if has_samples:
+            conn.execute(
+                "DELETE FROM preference_samples WHERE decision_id = ?",
+                (r["did"],))
+        conn.execute("DELETE FROM decisions WHERE id = ?", (r["did"],))
+        # dissolve the group only when no other decision owns it
+        still_owned = conn.execute(
+            "SELECT 1 FROM decisions WHERE group_id = ? LIMIT 1",
+            (r["gid"],)).fetchone()
+        if still_owned is None:
+            conn.execute(
+                "UPDATE photos SET group_id = NULL WHERE group_id = ?",
+                (r["gid"],))
+            conn.execute("DELETE FROM groups WHERE id = ?", (r["gid"],))
 
 
 def _backfill_recommended_for_decided(conn: sqlite3.Connection) -> None:
