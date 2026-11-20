@@ -166,6 +166,15 @@ export function renderHistory(container) {
     status.className = `badge badge--status-${d.group_status || 'decided'}`;
     status.textContent = statusText(d.group_status);
 
+    if (d.source === 'auto') {
+      const autoBadge = document.createElement('span');
+      autoBadge.className = 'badge badge--auto';
+      autoBadge.dataset.testid = 'auto-badge';
+      autoBadge.textContent = '自动';
+      autoBadge.title = '流水线自动去重（三哈希全同），规则处理非偏好';
+      status.after(autoBadge);
+    }
+
     const kept = document.createElement('span');
     kept.className = 'history-row__kept';
     kept.dataset.testid = 'history-kept';

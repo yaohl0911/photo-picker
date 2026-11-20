@@ -98,6 +98,10 @@ export const listHistory = ({ offset = 0, limit = 50 } = {}) =>
 
 /** 当前服务端设置（源目录 / 淘汰目录 / 相似判定阈值），设置页服务端优先加载用。 */
 export const getSettings = () => request('/api/settings');
+export const updateSettings = (payload) => request('/api/settings', {
+  method: 'PUT',
+  body: payload,
+});
 
 /** 目录浏览（源目录选择器）：列某目录下的子目录，~ 展开。 */
 export const fsList = (path) =>

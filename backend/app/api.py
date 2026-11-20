@@ -21,8 +21,9 @@ Weight semantics
 import json
 import os
 
-from app import executor, grouper, hashing, learner, recommender, scanner
+from app import auto_resolve, executor, grouper, hashing, learner, recommender, scanner
 from app.config import get_settings as get_config_settings
+from app.config import update_settings as config_update_settings
 from app.recommender import DIMENSIONS, DIMENSION_LABELS, DEFAULT_WEIGHTS
 
 __all__ = [
@@ -162,6 +163,8 @@ def get_overview(conn):
         "not_duplicate_groups": count(
             "SELECT COUNT(*) FROM groups WHERE status = 'not_duplicate'"),
         "decisions_count": count("SELECT COUNT(*) FROM decisions"),
+        "auto_resolved_groups": count(
+            "SELECT COUNT(*) FROM decisions WHERE source = 'auto'"),
         "samples": model["sample_count"],
         "model_version": model["version"],
         "last_scan_at": last_scan,
@@ -445,7 +448,7 @@ def list_history(conn, offset=0, limit=50):
     total = conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
     rows = conn.execute(
         "SELECT d.id AS decision_id, d.group_id, g.status AS group_status,"
-        "       d.kept_photo_ids, d.decided_at, d.applied_at,"
+        "       d.kept_photo_ids, d.decided_at, d.applied_at, d.source,"
         "       (SELECT (SELECT COUNT(*) FROM move_log m"
         "                 WHERE m.decision_id = d.id)"
         "        + (SELECT COUNT(*) FROM video_moves v"
@@ -467,6 +470,7 @@ def list_history(conn, offset=0, limit=50):
             "group_status": r["group_status"],
             # NULL kept ids = a 'not duplicate' dismissal (nothing kept)
             "kind": "dismiss" if raw_kept is None else "keep",
+            "source": r["source"] if r["source"] is not None else "user",
             "kept_photo_ids": kept,
             "decided_at": r["decided_at"],
             "applied_at": r["applied_at"],
@@ -499,7 +503,27 @@ def get_settings(conn):
         "rejected_root": executor.default_rejected_root(conn),
         "phash_threshold": settings["phash_threshold"],
         "time_window_sec": settings["time_window_sec"],
+        "auto_resolve_identical": settings["auto_resolve_identical"],
     }
+
+
+def update_runtime_settings(conn, **kwargs):
+    """Persist whitelisted runtime settings from the settings page.
+
+    Accepts ``auto_resolve_identical`` (bool); other config keys keep
+    their dedicated write paths. Validation and unknown-key errors come
+    from ``app.config.update_settings`` (ValueError -> HTTP 422).
+    """
+    allowed = {"auto_resolve_identical"}
+    unknown = [k for k in kwargs if k not in allowed]
+    if unknown:
+        raise ValueError(f"unknown setting(s): {', '.join(sorted(unknown))}")
+    for key in kwargs:
+        if not isinstance(kwargs[key], bool):
+            raise ValueError(f"{key} must be a boolean")
+    config_update_settings(
+        conn, **{k: kwargs[k] for k in allowed & set(kwargs)})
+    return get_settings(conn)
 
 
 # --- pipeline ----------------------------------------------------------------
@@ -574,6 +598,12 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
     if progress_cb is not None:
         progress_cb("recommend", 1, 1)
     report["recommend"] = {"recalculated": len(recalculated)}
+
+    # stage 6: auto-resolve pixel-identical groups (user toggle)
+    enabled = get_config_settings(conn).get("auto_resolve_identical", True)
+    auto_report = auto_resolve.auto_resolve_pending(
+        conn, progress_cb=progress_cb, enabled=enabled)
+    report["auto"] = auto_report
     return report
 
 

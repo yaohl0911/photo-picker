@@ -1660,3 +1660,25 @@ kbd {
   flex: 1; font-size: 12px; color: var(--text-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 自动去重开关行（完整流水线卡片内） */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 2px;
+  font-size: 13px;
+  color: var(--text-2, #4a5468);
+  cursor: pointer;
+}
+.check-row input[type='checkbox'] {
+  margin-top: 2px;
+  accent-color: #2563eb;
+}
+
+/* 历史行「自动」徽章（流水线自动去重决策） */
+.badge--auto {
+  background: #eef2ff;
+  color: #4338ca;
+  border: 1px solid #c7d2fe;
+}

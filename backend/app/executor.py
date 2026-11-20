@@ -87,13 +87,16 @@ def rejected_dir_for(conn: sqlite3.Connection, src: str) -> str:
 
 
 def apply_decision(
-    conn: sqlite3.Connection, group_id: int, keep_photo_ids, learn: bool = True
+    conn: sqlite3.Connection, group_id: int, keep_photo_ids, learn: bool = True,
+    source: str = "user",
 ) -> int:
     """Apply a keep/reject decision for one group; return the decision id.
 
     Raises KeyError when the group does not exist and ValueError when
     keep_photo_ids contains photos outside the group; both happen before
     anything is written. Learning (best effort) runs before the moves.
+    ``source`` records who made the decision ('user' | 'auto') for the
+    history page; auto decisions skip learning entirely.
     """
     group = conn.execute(
         "SELECT id FROM groups WHERE id = ?", (group_id,)
@@ -116,9 +119,9 @@ def apply_decision(
     keep_list = list(keep_photo_ids)
 
     decision_id = conn.execute(
-        "INSERT INTO decisions (group_id, kept_photo_ids, decided_at) "
-        "VALUES (?, ?, ?)",
-        (group_id, json.dumps(keep_list), _now()),
+        "INSERT INTO decisions (group_id, kept_photo_ids, decided_at, source) "
+        "VALUES (?, ?, ?, ?)",
+        (group_id, json.dumps(keep_list), _now(), source),
     ).lastrowid
     conn.execute("UPDATE groups SET status = 'decided' WHERE id = ?", (group_id,))
 

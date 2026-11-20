@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Body, Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -202,6 +202,11 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
     @app.get("/api/settings")
     def settings(conn: sqlite3.Connection = Depends(get_conn)):
         return api.get_settings(conn)
+
+    @app.put("/api/settings")
+    def update_settings(payload: dict = Body(...),
+                        conn: sqlite3.Connection = Depends(get_conn)):
+        return api.update_runtime_settings(conn, **payload)
 
     # --- filesystem browsing (directory picker) -------------------------------
 

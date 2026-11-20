@@ -173,3 +173,25 @@ def test_fs_list_missing_path_is_422(client, tmp_path):
         "/api/fs/list", params={"path": str(tmp_path / "nope")})
     assert r.status_code == 422
     assert "不存在" in r.json()["detail"]
+
+
+def test_put_settings_toggles_auto_resolve(client):
+    r = client.put("/api/settings", json={"auto_resolve_identical": False})
+    assert r.status_code == 200
+    assert r.json()["auto_resolve_identical"] is False
+    # persisted for the next GET
+    assert client.get("/api/settings").json()["auto_resolve_identical"] \
+        is False
+    # and back on
+    r = client.put("/api/settings", json={"auto_resolve_identical": True})
+    assert r.json()["auto_resolve_identical"] is True
+
+
+def test_put_settings_rejects_unknown_key(client):
+    r = client.put("/api/settings", json={"foo": True})
+    assert r.status_code == 422
+
+
+def test_put_settings_rejects_non_bool(client):
+    r = client.put("/api/settings", json={"auto_resolve_identical": "yes"})
+    assert r.status_code == 422

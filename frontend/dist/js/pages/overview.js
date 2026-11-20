@@ -60,6 +60,7 @@ export function renderOverview(container) {
       { label: '已决策', value: stats.decided_groups },
       { label: '非重复', value: stats.not_duplicate_groups },
       { label: '决策次数', value: stats.decisions_count },
+      { label: '自动去重', value: stats.auto_resolved_groups },
       { label: '学习样本', value: stats.samples },
     ];
     stripEl.replaceChildren(

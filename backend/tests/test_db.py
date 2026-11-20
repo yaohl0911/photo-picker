@@ -71,6 +71,7 @@ def test_get_settings_returns_defaults(db):
         "time_window_sec": 60,
         "rejected_root": "",
         "face_engine": "auto",
+        "auto_resolve_identical": True,
     }
 
 

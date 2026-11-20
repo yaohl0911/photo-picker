@@ -585,13 +585,14 @@ def test_run_full_pipeline_blocking(db, tmp_path):
     assert "recalculated" in report["recommend"]
     # scan recorded
     assert api.get_overview(conn)["last_scan_at"] is not None
-    # no crash, all phases present
-    assert set(report) == {"scan", "hashing", "grouping", "analysis", "recommend"}
+    # no crash, all phases present (auto stage added by auto-resolve)
+    assert set(report) == {"scan", "hashing", "grouping", "analysis",
+                           "recommend", "auto"}
 
 
 def test_run_full_pipeline_blocking_reports_all_five_stages(db, tmp_path):
     """progress_cb must fire for every stage (scan/hash/group/analysis/
-    recommend) with positional (phase, done, total) args — the UI's
+    recommend/auto) with positional (phase, done, total) args — the UI's
     per-stage progress list depends on it."""
     conn = db
     src = tmp_path / "lib"
@@ -607,7 +608,8 @@ def test_run_full_pipeline_blocking_reports_all_five_stages(db, tmp_path):
     api.run_full_pipeline_blocking(conn, progress_cb=cb)
 
     phases = {c[0] for c in calls}
-    assert phases == {"scan", "hash", "group", "analysis", "recommend"}, phases
+    assert phases == {"scan", "hash", "group", "analysis", "recommend",
+                      "auto"}, phases
     # every stage reports progress within 1..total, and finishes at total
     by_phase = {}
     for c in calls:

@@ -15,7 +15,7 @@
 // 添加/删除/保存时写入，服务端加载成功时以服务端为准重写，
 // 仅作为离线降级的后备副本。
 
-import { getOverview, getSettings, startScan, getJob, listJobs, runPipeline, fsList } from '../api.js';
+import { getOverview, getSettings, updateSettings, startScan, getJob, listJobs, runPipeline, fsList } from '../api.js';
 import { toast } from '../util.js';
 
 const STORAGE_KEY = 'photo-picker.source_dirs';
@@ -36,15 +36,17 @@ const STAGE_LABELS = {
   group: '相似分组',
   analysis: '质量分析',
   recommend: '推荐计算',
+  auto: '自动去重',
 };
 
-// 流水线的五个固定阶段，按执行顺序（job.note 的推进顺序）
+// 流水线的固定阶段，按执行顺序（job.note 的推进顺序）
 const PIPELINE_STAGES = [
   { key: 'scan', label: '索引扫描' },
   { key: 'hash', label: '感知哈希' },
   { key: 'group', label: '相似分组' },
   { key: 'analysis', label: '质量分析' },
   { key: 'recommend', label: '推荐计算' },
+  { key: 'auto', label: '自动去重' },
 ];
 
 const PHASE_LABELS = {
@@ -172,7 +174,11 @@ export function renderSettings(container) {
       <div class="card__head">
         <h2 class="card__title" id="pipeline-title">完整流水线</h2>
       </div>
-      <p class="hint">一次性执行：索引扫描 → 感知哈希 → 相似分组 → 质量分析 → 推荐计算。照片较多时耗时较长。</p>
+      <p class="hint">一次性执行：索引扫描 → 感知哈希 → 相似分组 → 质量分析 → 推荐计算 → 自动去重。照片较多时耗时较长。</p>
+      <label class="check-row" data-testid="auto-resolve-row">
+        <input type="checkbox" id="auto-resolve-chk" data-testid="auto-resolve-chk" checked>
+        <span>自动处理完全相同的照片（三哈希全同才触发，保留原片并移入淘汰目录，历史页可撤销）</span>
+      </label>
       <div class="card__foot">
         <button class="btn" id="pipeline-btn" type="button">运行完整流水线</button>
       </div>
@@ -191,6 +197,7 @@ export function renderSettings(container) {
   const dirList = $('#dir-list');
   const scanBtn = $('#scan-btn');
   const jobCard = $('#job-card');
+  const autoResolveChk = $('#auto-resolve-chk');
   const jobKind = $('#job-kind');
   const jobFill = $('#job-fill');
   const jobProgressWrap = $('#job-progress');
@@ -251,6 +258,9 @@ export function renderSettings(container) {
       const settings = await getSettings();
       const serverDirs = (Array.isArray(settings.source_dirs) ? settings.source_dirs : [])
         .filter((d) => typeof d === 'string' && d);
+      if (typeof settings.auto_resolve_identical === 'boolean') {
+        autoResolveChk.checked = settings.auto_resolve_identical;
+      }
       showOfflineNotice(null);
       if (serverDirs.length > 0) {
         state.dirs = serverDirs;
@@ -261,6 +271,16 @@ export function renderSettings(container) {
       showOfflineNotice('离线模式，显示本地保存的目录');
     }
   }
+
+  autoResolveChk.addEventListener('change', async () => {
+    try {
+      await updateSettings({ auto_resolve_identical: autoResolveChk.checked });
+      toast(autoResolveChk.checked ? '已开启自动去重' : '已关闭自动去重');
+    } catch (err) {
+      autoResolveChk.checked = !autoResolveChk.checked; // 回滚 UI
+      toast('保存失败：' + err.message, 'warn');
+    }
+  });
 
   function renderDirs() {
     dirList.replaceChildren();
@@ -808,6 +828,10 @@ export function renderSettings(container) {
     lines.push(`质量分析：完成 ${n(analysis.analyzed)} 张，失败 ${n(analysis.failed)} 张`);
     const recommend = report.recommend || {};
     lines.push(`推荐计算：更新 ${n(recommend.recalculated)} 组`);
+    const auto = report.auto || {};
+    if (auto.resolved_groups != null) {
+      lines.push(`自动去重：已处理 ${n(auto.resolved_groups)} 组完全相同照片（移动 ${n(auto.moved_files)} 个文件）`);
+    }
 
     const errorCount =
       (Array.isArray(scan.errors) ? scan.errors.length : 0) +
@@ -815,6 +839,10 @@ export function renderSettings(container) {
       (Array.isArray(analysis.errors) ? analysis.errors.length : 0);
     if (errorCount > 0) {
       lines.push(`⚠ 共 ${n(errorCount)} 条错误（部分文件无法解码或分析，已跳过）`);
+    }
+    const autoErrors = Array.isArray(auto.errors) ? auto.errors.length : 0;
+    if (autoErrors > 0) {
+      lines.push(`⚠ 自动去重有 ${n(autoErrors)} 组处理失败（详见历史页，可撤销）`);
     }
 
     pipelineReport.replaceChildren();

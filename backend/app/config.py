@@ -18,6 +18,7 @@ _DEFAULTS = {
     "time_window_sec": 60,   # capture-time clustering window
     "rejected_root": "",     # empty -> per-source-dir _photo_picker_rejected
     "face_engine": "auto",   # auto | mediapipe | haar | none
+    "auto_resolve_identical": True,  # auto-decide pixel-identical groups
 }
 
 
@@ -27,6 +28,8 @@ def _decode(key: str, raw: str):
     if isinstance(default, list):
         value = json.loads(raw)
         return value if isinstance(value, list) else default
+    if isinstance(default, bool):
+        return raw in ("True", "true", "1")
     if isinstance(default, int):
         return int(raw)
     return raw

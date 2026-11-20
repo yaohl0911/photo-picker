@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS decisions (
     group_id INTEGER REFERENCES groups(id),
     kept_photo_ids TEXT,   -- JSON array
     decided_at TEXT,
-    applied_at TEXT
+    applied_at TEXT,
+    source TEXT NOT NULL DEFAULT 'user'  -- user | auto
 );
 
 CREATE TABLE IF NOT EXISTS feedback_events (
@@ -133,14 +134,25 @@ def connect(db_path: str) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     """Create all tables if missing and (re)record the schema version.
 
-    Idempotent: safe to call on every startup.
+    Idempotent: safe to call on every startup. Also applies lightweight
+    column migrations for tables created before a column existed.
     """
     conn.executescript(_SCHEMA)
+    _ensure_column(conn, "decisions", "source",
+                   "TEXT NOT NULL DEFAULT 'user'")
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)",
         (str(SCHEMA_VERSION),),
     )
     conn.commit()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str,
+                   ddl_type: str) -> None:
+    """Add ``column`` to an existing ``table`` when it is missing."""
+    cols = [row["name"] for row in conn.execute(f"PRAGMA table_info({table})")]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
 
 
 # App-level connection cache: one shared connection per database path.
