@@ -192,6 +192,9 @@ class TestConcurrency:
         make_fake_file(source, "d.jpg", b"d" * 8)
         update_settings(db, source_dirs=[str(source)])
         for i in range(2):  # photos outside the scanned dir
+            # real files: purge now removes rows whose files vanished,
+            # so phantom paths would not survive the scan
+            make_fake_file(tmp_path, f"q{i}.jpg", b"q" * 8)
             _insert_photo(db, str(tmp_path / f"q{i}.jpg"))
 
         scan_id = manager.submit_scan()

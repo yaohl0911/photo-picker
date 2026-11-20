@@ -573,6 +573,7 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
         "new": scan_report.new_files,
         "changed": scan_report.changed_files,
         "missing": scan_report.missing_files,
+        "purged": scan_report.purged_files,
         "total": scan_report.total_files,
         "pairs": scan_report.pair_count,
         "errors": list(scan_report.errors),

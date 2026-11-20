@@ -195,7 +195,7 @@ def test_scan_detects_mtime_only_change(db, tmp_path):
     assert _files(db)[str(p)]["mtime"] == 1_000_500
 
 
-def test_scan_missing_file_keeps_row_and_photo(db, tmp_path):
+def test_scan_missing_file_purges_row_and_photo(db, tmp_path):
     src = tmp_path / "src"
     src.mkdir()
     a = make_fake_file(src, "a.jpg")
@@ -206,10 +206,106 @@ def test_scan_missing_file_keeps_row_and_photo(db, tmp_path):
     report = scan(db)
 
     assert report.missing_files == 1
+    assert report.purged_files == 1
     assert report.new_files == 0
     assert report.changed_files == 0
-    assert str(a) in _files(db)  # row kept, not deleted
-    assert len(_photos(db)) == 2  # photos untouched
+    assert str(a) not in _files(db)  # row gone, not kept
+    assert len(_photos(db)) == 1  # orphaned photo removed
+
+
+def test_scan_keeps_rows_when_parent_dir_gone(db, tmp_path):
+    # whole directory vanished -> probably an unmounted volume; keep rows
+    src = tmp_path / "src"
+    src.mkdir()
+    a = make_fake_file(src, "a.jpg")
+    _scan(db, src)
+
+    a.unlink()
+    src.rmdir()  # parent gone too
+    report = scan(db)
+
+    assert report.purged_files == 0
+    assert str(a) in _files(db)
+
+
+def test_scan_keeps_rows_with_open_move_log(db, tmp_path):
+    # an un-undone move references the file: undo needs files.path, keep it
+    src = tmp_path / "src"
+    src.mkdir()
+    a = make_fake_file(src, "a.jpg")
+    _scan(db, src)
+    fid = _files(db)[str(a)]["id"]
+    conn = db  # fixture is the connection
+    conn.execute(
+        "INSERT INTO decisions (group_id, kept_photo_ids, decided_at)"
+        " VALUES (NULL, '[1]', '2026-11-20T00:00:00')")
+    conn.execute(
+        "INSERT INTO move_log (decision_id, file_id, src_path, dst_path,"
+        " moved_at, undone) VALUES (1, ?, ?, ?, ?, 0)",
+        (fid, str(a), "/rej/a.jpg", "2026-11-20T00:00:01"))
+    conn.commit()
+
+    a.unlink()
+    report = scan(db)
+
+    assert report.purged_files == 0
+    assert str(a) in _files(db)
+
+
+def test_scan_purge_dissolves_small_pending_group(db, tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    a = make_fake_file(src, "a.jpg", b"one")
+    b = make_fake_file(src, "b.jpg", b"two")
+    _scan(db, src)
+    pa = _files(db)[str(a)]["photo_id"]
+    pb = _files(db)[str(b)]["photo_id"]
+    conn = db
+    gid = conn.execute(
+        "INSERT INTO groups (status, created_at) VALUES ('pending',"
+        " '2026-11-20T00:00:00') RETURNING id").fetchone()[0]
+    conn.execute(
+        "UPDATE photos SET group_id = ? WHERE id IN (?, ?)", (gid, pa, pb))
+
+    b.unlink()
+    report = scan(db)
+
+    assert report.purged_files == 1
+    # one member left: the group dissolved, survivor stays ungrouped
+    assert conn.execute(
+        "SELECT COUNT(*) FROM groups WHERE id = ?", (gid,)).fetchone()[0] == 0
+    assert conn.execute(
+        "SELECT group_id FROM photos WHERE id = ?",
+        (pa,)).fetchone()[0] is None
+    assert conn.execute(
+        "SELECT COUNT(*) FROM photos WHERE id = ?", (pb,)).fetchone()[0] == 0
+
+
+def test_scan_purge_keeps_decided_group_row(db, tmp_path):
+    # decided groups stay even if every rejected member is purged:
+    # the history page still needs the group row
+    src = tmp_path / "src"
+    src.mkdir()
+    a = make_fake_file(src, "a.jpg", b"one")
+    b = make_fake_file(src, "b.jpg", b"two")
+    _scan(db, src)
+    pa = _files(db)[str(a)]["photo_id"]
+    conn = db
+    gid = conn.execute(
+        "INSERT INTO groups (status, created_at) VALUES ('decided',"
+        " '2026-11-20T00:00:00') RETURNING id").fetchone()[0]
+    conn.execute(
+        "UPDATE photos SET group_id = ? WHERE id = ?", (gid, pa))
+    conn.execute(
+        "INSERT INTO decisions (group_id, kept_photo_ids, decided_at)"
+        " VALUES (?, '[9]', '2026-11-20T00:00:00')", (gid,))
+
+    a.unlink()
+    report = scan(db)
+
+    assert report.purged_files == 1
+    assert conn.execute(
+        "SELECT COUNT(*) FROM groups WHERE id = ?", (gid,)).fetchone()[0] == 1
 
 
 # --- scan_runs bookkeeping ---------------------------------------------------

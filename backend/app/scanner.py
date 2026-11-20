@@ -106,6 +106,7 @@ class ScanReport:
     new_files: int = 0
     changed_files: int = 0
     missing_files: int = 0
+    purged_files: int = 0
     total_files: int = 0
     pair_count: int = 0
     errors: list[str] = field(default_factory=list)
@@ -486,6 +487,7 @@ def scan(
 
         on_disk = set(paths)
         report.missing_files = sum(1 for path in known if path not in on_disk)
+        _purge_vanished_rows(conn, known, on_disk, report)
 
         report.pair_count = pair_raw_jpg(conn)
         _finish_scan_run(conn, run_id)
@@ -495,6 +497,73 @@ def scan(
         conn.commit()
         raise
     return report
+
+
+def _purge_vanished_rows(
+    conn: sqlite3.Connection,
+    known: dict,
+    on_disk: set,
+    report: ScanReport,
+) -> None:
+    """Remove rows for files that were deleted on disk after indexing.
+
+    Safety valves — a row is KEPT when any applies:
+    * the file still exists somewhere _discover prunes (rejected dirs),
+    * its parent directory is gone too (volume unmounted / dir moved —
+      deleting the whole tree would be reckless on a cold disk),
+    * an un-undone move_log row references it (undo needs the row to
+      restore files.path after moving bytes back).
+    Orphaned photos lose their row; tiny pending groups without decision
+    history dissolve (decided groups stay for the history page).
+    """
+    protected = {
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT file_id FROM move_log WHERE undone = 0")}
+    purged = 0
+    for path, row in known.items():
+        if path in on_disk or os.path.exists(path):
+            continue
+        if not os.path.isdir(os.path.dirname(path)):
+            continue
+        if row["id"] in protected:
+            continue
+        pid = conn.execute(
+            "SELECT photo_id FROM files WHERE id = ?",
+            (row["id"],)).fetchone()
+        # photos.primary_file_id references files(id): release the
+        # reference BEFORE deleting the file row, or FK fires immediately
+        conn.execute(
+            "UPDATE photos SET primary_file_id = NULL"
+            " WHERE primary_file_id = ?", (row["id"],))
+        conn.execute("DELETE FROM files WHERE id = ?", (row["id"],))
+        purged += 1
+        if pid is None or pid[0] is None:
+            continue
+        photo_id = pid[0]
+        left = conn.execute(
+            "SELECT COUNT(*) FROM files WHERE photo_id = ?",
+            (photo_id,)).fetchone()[0]
+        if left == 0:
+            conn.execute(
+                "DELETE FROM quality_scores WHERE photo_id = ?",
+                (photo_id,))
+            conn.execute("DELETE FROM photos WHERE id = ?", (photo_id,))
+    report.purged_files = purged
+
+    # tiny pending groups (all/one member purged) dissolve unless the
+    # group carries decision history (undo targets keep their group row)
+    for g in conn.execute(
+        "SELECT id FROM groups WHERE status = 'pending' AND ("
+        " SELECT COUNT(*) FROM photos p WHERE p.group_id = groups.id) <= 1"
+    ).fetchall():
+        has_history = conn.execute(
+            "SELECT 1 FROM decisions WHERE group_id = ? LIMIT 1",
+            (g["id"],)).fetchone()
+        if has_history:
+            continue
+        conn.execute(
+            "UPDATE photos SET group_id = NULL WHERE group_id = ?", (g["id"],))
+        conn.execute("DELETE FROM groups WHERE id = ?", (g["id"],))
 
 
 # --- RAW+JPG pairing ----------------------------------------------------------

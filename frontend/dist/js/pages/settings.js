@@ -819,7 +819,8 @@ export function renderSettings(container) {
     const n = (v) => (v == null ? 0 : Number(v).toLocaleString('zh-CN'));
     const lines = [];
     const scan = report.scan || {};
-    lines.push(`索引扫描：新增 ${n(scan.new)} / 变更 ${n(scan.changed)} / 共 ${n(scan.total)} 个文件，RAW+JPG 配对 ${n(scan.pairs)} 组`);
+    const purgedTxt = scan.purged ? `，清理 ${n(scan.purged)} 条已删除文件的记录` : '';
+    lines.push(`索引扫描：新增 ${n(scan.new)} / 变更 ${n(scan.changed)} / 共 ${n(scan.total)} 个文件，RAW+JPG 配对 ${n(scan.pairs)} 组${purgedTxt}`);
     const hashing = report.hashing || {};
     lines.push(`感知哈希：计算 ${n(hashing.hashed)} 个，跳过 ${n(hashing.skipped)} 个`);
     const grouping = report.grouping || {};
