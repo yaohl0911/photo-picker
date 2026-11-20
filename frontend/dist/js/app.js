@@ -72,7 +72,7 @@ function render() {
 
   appEl.dataset.page = name;
   appEl.replaceChildren();
-  document.title = `照片去重助手 · ${ROUTES[name].label}`;
+  document.title = `照片精选助手 · ${ROUTES[name].label}`;
   setActiveNav(name);
 
   const cleanup = ROUTES[name].render(appEl);
