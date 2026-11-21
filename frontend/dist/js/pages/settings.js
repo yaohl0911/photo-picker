@@ -33,6 +33,7 @@ const KIND_LABELS = {
 const STAGE_LABELS = {
   scan: '索引扫描',
   hash: '感知哈希',
+  screenshots: '截图识别',
   group: '相似分组',
   analysis: '质量分析',
   recommend: '推荐计算',
@@ -43,6 +44,7 @@ const STAGE_LABELS = {
 const PIPELINE_STAGES = [
   { key: 'scan', label: '索引扫描' },
   { key: 'hash', label: '感知哈希' },
+  { key: 'screenshots', label: '截图识别' },
   { key: 'group', label: '相似分组' },
   { key: 'analysis', label: '质量分析' },
   { key: 'recommend', label: '推荐计算' },
