@@ -250,16 +250,17 @@ class TestPipeline:
         assert st["phase"] == "finished", st
         assert st["kind"] == "pipeline"
         assert st["progress"] == 1.0
-        # the six-stage report rides on the job so page switches can't lose it
+        # the seven-stage report rides on the job so page switches can't lose it
         assert set(st["result"]) == {
-            "scan", "hashing", "grouping", "analysis", "recommend", "auto"
+            "scan", "hashing", "screenshots", "grouping",
+            "analysis", "recommend", "auto"
         }
         assert st["result"]["scan"]["total"] == 2
         assert db.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 2
         # per-stage start/finish timestamps for the progress bars
         times = st["stage_times"]
-        assert set(times) == {"scan", "hash", "group", "analysis",
-                              "recommend", "auto"}
+        assert set(times) == {"scan", "hash", "screenshots", "group",
+                              "analysis", "recommend", "auto"}
         for stage, t in times.items():
             assert t["started"], stage
             assert t["finished"], stage  # job finished -> all stages closed
