@@ -39,7 +39,8 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS photos (
     id INTEGER PRIMARY KEY,
     primary_file_id INTEGER REFERENCES files(id),
-    group_id INTEGER REFERENCES groups(id)
+    group_id INTEGER REFERENCES groups(id),
+    is_screenshot INTEGER   -- NULL=未分类, 1=截图(截图页处理), 0=照片
 );
 
 CREATE TABLE IF NOT EXISTS quality_scores (
@@ -140,6 +141,7 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
     _ensure_column(conn, "decisions", "source",
                    "TEXT NOT NULL DEFAULT 'user'")
+    _ensure_column(conn, "photos", "is_screenshot", "INTEGER")
     _backfill_recommended_for_decided(conn)
     _purge_ghost_auto_decisions(conn)
     conn.execute(

@@ -225,3 +225,13 @@ class TestGhostAutoDecisionPurge:
         init_db(conn)
 
         assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 1
+
+
+def test_photos_have_is_screenshot_column(db):
+    """基础 schema 即含 is_screenshot（grouper/auto_resolve 的 SQL 过滤依赖它，
+    不等截图模块惰性 ALTER）。"""
+    row = db.execute(
+        "SELECT is_screenshot FROM photos LIMIT 1").fetchone()
+    # 空表也能查询成功；列默认 NULL
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(photos)")}
+    assert "is_screenshot" in cols
