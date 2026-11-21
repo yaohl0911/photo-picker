@@ -230,6 +230,33 @@ class TestAutoResolvePending:
         assert conn.execute(
             "SELECT COUNT(*) AS n FROM decisions").fetchone()["n"] == 0
 
+    def test_identical_screenshots_are_not_auto_resolved(self, conn):
+        # Known screenshots (is_screenshot=1) never auto-resolve, even
+        # pixel-identical ones: they belong to the screenshots page, not
+        # the duplicate flow. NULL (unclassified) stays a photo.
+        gid = _mk_group(conn, "g1")
+        p1 = _add_photo(conn, "s1.png", H, A, D, gid, fmt="png")
+        p2 = _add_photo(conn, "s2.png", H, A, D, gid, fmt="png")
+        conn.execute(
+            "UPDATE photos SET is_screenshot = 1 WHERE id IN (?, ?)",
+            (p1, p2))
+
+        report = auto_resolve.auto_resolve_pending(conn)
+
+        assert report["resolved_groups"] == 0
+        # the group stays pending and both photos stay put (same
+        # group_id, no auto decision row)
+        status = conn.execute(
+            "SELECT status FROM groups WHERE id = ?", (gid,)
+        ).fetchone()["status"]
+        assert status == "pending"
+        gids = {r["group_id"] for r in conn.execute(
+            "SELECT group_id FROM photos WHERE id IN (?, ?)", (p1, p2))}
+        assert gids == {gid}
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM decisions WHERE source = 'auto'"
+        ).fetchone()["n"] == 0
+
 
 class TestRecommendedBackfill:
     def test_init_db_backfills_decided_groups_from_decisions(self, conn):

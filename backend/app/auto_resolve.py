@@ -68,6 +68,7 @@ def find_identical_clusters(conn: sqlite3.Connection) -> dict:
         JOIN groups g ON g.id = p.group_id
         JOIN files f ON f.id = p.primary_file_id
         WHERE g.status = 'pending' AND f.hash_phash IS NOT NULL
+        AND COALESCE(p.is_screenshot, 0) = 0
         ORDER BY p.group_id, p.id
         """
     ).fetchall()
