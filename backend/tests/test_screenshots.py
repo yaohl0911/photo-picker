@@ -109,6 +109,39 @@ def test_ensure_analyzed_classifies_by_real_size(sconn):
     assert again == {"scanned": 0, "found": 0}
 
 
+def test_ensure_analyzed_reports_progress(sconn):
+    conn, tmp = sconn
+    src = tmp / "src"
+    _mk_png(src / "shot.png", 1170, 2532)
+    _mk_png(src / "icon.png", 64, 64)
+    _add_file(conn, src, "shot.png", "png")
+    _add_file(conn, src, "icon.png", "png")
+    conn.commit()
+
+    calls = []
+    shots = screenshots.ensure_analyzed(
+        conn, progress_cb=lambda *a: calls.append(a))
+
+    assert shots["scanned"] == 2
+    assert all(c[0] == "screenshots" for c in calls)
+    assert calls[0] == ("screenshots", 0, shots["scanned"])
+    assert calls[-1][1] == calls[-1][2] == shots["scanned"]  # 结束于 total
+    # 每行处理完回调一次 → 总调用数 = total + 1（含开局 0/total）
+    assert len(calls) == shots["scanned"] + 1
+
+
+def test_ensure_analyzed_empty_reports_zero_progress(sconn):
+    conn, _ = sconn
+
+    calls = []
+    report = screenshots.ensure_analyzed(
+        conn, progress_cb=lambda *a: calls.append(a))
+
+    assert report == {"scanned": 0, "found": 0}
+    # 空库也要发一次相位，UI 阶段列表依赖
+    assert calls == [("screenshots", 0, 0)]
+
+
 def test_list_screenshots_paging_and_when(sconn):
     conn, tmp = sconn
     src = tmp / "src"

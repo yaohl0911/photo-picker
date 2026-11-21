@@ -85,17 +85,26 @@ def _classify(name: str, fmt: str, camera, size) -> tuple[bool, str]:
     return False, ""
 
 
-def ensure_analyzed(conn: sqlite3.Connection) -> dict:
-    """Classify every photo not yet marked; idempotent per row."""
+def ensure_analyzed(conn: sqlite3.Connection, progress_cb=None) -> dict:
+    """Classify every photo not yet marked; idempotent per row.
+
+    ``progress_cb("screenshots", done, total)`` is called with
+    ``done = 0`` before the loop starts and again after each row, so the
+    pipeline's per-stage progress list sees the phase begin and finish.
+    """
     _ensure_columns(conn)
     rows = conn.execute(
         "SELECT f.id AS fid, f.path, f.format, f.camera, p.id AS pid"
         " FROM photos p JOIN files f ON f.id = p.primary_file_id"
         " WHERE p.is_screenshot IS NULL"
     ).fetchall()
+    total = len(rows)
+    if progress_cb:
+        progress_cb("screenshots", 0, total)
     if not rows:
         return {"scanned": 0, "found": 0}
     found = 0
+    done = 0
     for r in rows:
         cached = conn.execute(
             "SELECT width, height FROM files WHERE id = ?",
@@ -115,6 +124,9 @@ def ensure_analyzed(conn: sqlite3.Connection) -> dict:
             (1 if ok else 0, r["pid"]))
         if ok:
             found += 1
+        done += 1
+        if progress_cb:
+            progress_cb("screenshots", done, total)
     conn.commit()
     return {"scanned": len(rows), "found": found}
 
