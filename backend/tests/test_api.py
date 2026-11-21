@@ -586,14 +586,16 @@ def test_run_full_pipeline_blocking(db, tmp_path):
     # scan recorded
     assert api.get_overview(conn)["last_scan_at"] is not None
     # no crash, all phases present (auto stage added by auto-resolve)
-    assert set(report) == {"scan", "hashing", "grouping", "analysis",
-                           "recommend", "auto"}
+    assert set(report) == {"scan", "hashing", "screenshots", "grouping",
+                           "analysis", "recommend", "auto"}
+    # 假图无法解码 → 尺寸未知 → 判为非截图（found=0），但被分类过（scanned=3）
+    assert report["screenshots"] == {"scanned": 3, "found": 0}
 
 
-def test_run_full_pipeline_blocking_reports_all_five_stages(db, tmp_path):
-    """progress_cb must fire for every stage (scan/hash/group/analysis/
-    recommend/auto) with positional (phase, done, total) args — the UI's
-    per-stage progress list depends on it."""
+def test_run_full_pipeline_blocking_reports_all_seven_stages(db, tmp_path):
+    """progress_cb must fire for every stage (scan/hash/screenshots/group/
+    analysis/recommend/auto) with positional (phase, done, total) args — the
+    UI's per-stage progress list depends on it."""
     conn = db
     src = tmp_path / "lib"
     src.mkdir()
@@ -608,8 +610,8 @@ def test_run_full_pipeline_blocking_reports_all_five_stages(db, tmp_path):
     api.run_full_pipeline_blocking(conn, progress_cb=cb)
 
     phases = {c[0] for c in calls}
-    assert phases == {"scan", "hash", "group", "analysis", "recommend",
-                      "auto"}, phases
+    assert phases == {"scan", "hash", "screenshots", "group", "analysis",
+                      "recommend", "auto"}, phases
     # every stage reports progress within 1..total, and finishes at total
     by_phase = {}
     for c in calls:

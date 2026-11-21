@@ -576,7 +576,7 @@ def update_runtime_settings(conn, **kwargs):
 _ANALYSIS_COMMIT_STEP = 50  # commit cadence to keep write-lock windows short
 
 def run_full_pipeline_blocking(conn, progress_cb=None):
-    """Synchronous scan→pair→hash→group→analyze→recommend pipeline.
+    """Synchronous scan→hash→screenshots→group→analyze→recommend pipeline.
 
     Used by run.sh for the initial import and by POST /api/pipeline/run.
     Analysis failures (undecodable images, missing native deps) are
@@ -595,6 +595,12 @@ def run_full_pipeline_blocking(conn, progress_cb=None):
     }
     hash_report = hashing.compute_hashes(conn, progress_cb=progress_cb)
     report["hashing"] = dict(hash_report)
+    # Classify screenshots BEFORE grouping so known screenshots stay out
+    # of duplicate groups; NULL (unclassified) still groups (fallback).
+    from app import screenshots as screenshots_mod
+    shots_report = screenshots_mod.ensure_analyzed(
+        conn, progress_cb=progress_cb)
+    report["screenshots"] = dict(shots_report)
     group_report = grouper.build_groups(conn, progress_cb=progress_cb)
     report["grouping"] = dict(group_report)
 
