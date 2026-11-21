@@ -269,12 +269,14 @@ def build_groups(conn: sqlite3.Connection, progress_cb=None) -> dict:
 
     # Candidate files: hashed, attributed to a photo, and that photo not
     # locked into a decided/not_duplicate group (those have group_id set).
+    # Known screenshots (is_screenshot=1) are handled on the screenshots
+    # page; NULL is treated as a photo (conservative fallback).
     rows = conn.execute(
         "SELECT f.id, f.photo_id, f.hash_phash, f.hash_ahash, f.hash_dhash,"
         " f.captured_at"
         " FROM files f JOIN photos p ON p.id = f.photo_id"
         " WHERE p.group_id IS NULL AND f.hash_phash IS NOT NULL"
-        " AND f.hash_phash != ''"
+        " AND f.hash_phash != '' AND COALESCE(p.is_screenshot, 0) = 0"
     ).fetchall()
     files = [dict(row) for row in rows]
 

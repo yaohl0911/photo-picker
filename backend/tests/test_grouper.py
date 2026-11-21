@@ -400,3 +400,37 @@ def test_build_groups_reports_progress(db):
     assert calls
     assert all(c["phase"] == "group" for c in calls)
     assert calls[-1]["done"] == calls[-1]["total"] == 2
+
+
+def _mark_screenshot(db, photo_id):
+    db.execute("UPDATE photos SET is_screenshot = 1 WHERE id = ?",
+               (photo_id,))
+
+
+def test_screenshot_flagged_photo_is_excluded_from_grouping(db):
+    # 三张时间相邻、pHash 相同：两张普通照片 + 一张已标记截图
+    pid_a, _ = ins_file(db, "a.jpg", H0, AH0, DH0, T0)
+    pid_b, _ = ins_file(db, "b.jpg", H0, AH0, DH0, "2026-01-01T10:00:05")
+    pid_s, _ = ins_file(db, "s.png", H0, AH0, DH0, "2026-01-01T10:00:10")
+    _mark_screenshot(db, pid_s)
+    report = grouper.build_groups(db)
+    assert report["groups"] == 1
+    rows = db.execute(
+        "SELECT id, group_id FROM photos ORDER BY id").fetchall()
+    by_id = {r["id"]: r["group_id"] for r in rows}
+    assert by_id[pid_a] is not None and by_id[pid_a] == by_id[pid_b]
+    assert by_id[pid_s] is None  # 截图不进组
+    members = db.execute(
+        "SELECT COUNT(*) FROM photos WHERE group_id IS NOT NULL").fetchone()[0]
+    assert members == 2
+
+
+def test_unclassified_null_is_screenshot_still_groups(db):
+    # 兜底：is_screenshot 为 NULL（未分类）时按普通照片分组
+    pid_a, _ = ins_file(db, "x.jpg", H0, AH0, DH0, T0)
+    pid_b, _ = ins_file(db, "y.jpg", H0, AH0, DH0, "2026-01-01T10:00:05")
+    db.execute("UPDATE photos SET is_screenshot = NULL")
+    report = grouper.build_groups(db)
+    assert report["groups"] == 1
+    g = db.execute("SELECT group_id FROM photos WHERE id = ?", (pid_a,)).fetchone()
+    assert g[0] is not None
