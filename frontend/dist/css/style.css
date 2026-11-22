@@ -2202,17 +2202,17 @@ kbd {
   z-index: 40;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 12px 20px;
+  gap: 12px;
+  padding: 8px 14px;
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--ss-actionbar-shadow);
 }
 
-.ss-actionbar__info { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.ss-actionbar .btn { padding: 6px 12px; font-size: 13px; }
+.ss-actionbar__info { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
 .ss-actionbar__hint { font-size: 12px; color: var(--text-3); }
-.ss-actionbar__hint code { font-size: 11px; }
 
 .stat-chip--link {
   text-decoration: none;

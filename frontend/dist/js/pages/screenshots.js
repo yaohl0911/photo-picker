@@ -252,9 +252,9 @@ function renderActionbar() {
     bar.className = 'ss-actionbar';
     bar.dataset.testid = 'ss-actionbar';
     bar.innerHTML = `
-      <span class="ss-actionbar__info">
+      <span class="ss-actionbar__info" title="移入 _photo_picker_rejected，可撤销，不真删">
         已选 <strong data-testid="ss-actionbar-count">0</strong> 张
-        <span class="ss-actionbar__hint">移入 <code>_photo_picker_rejected</code>，可撤销，不真删</span>
+        <span class="ss-actionbar__hint">可撤销 · 不真删</span>
       </span>
       <button class="btn btn--danger" data-testid="ss-reject-btn">批量淘汰</button>`;
     const btn = bar.querySelector('[data-testid="ss-reject-btn"]');
