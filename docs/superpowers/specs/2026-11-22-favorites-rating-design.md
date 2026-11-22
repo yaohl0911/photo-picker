@@ -63,6 +63,6 @@ is_favorite   INTEGER NOT NULL DEFAULT 0,  -- 0/1
 
 ## 写域（agent-a1 独占，并行纪律）
 
-`backend/app/db.py`, `backend/app/api.py`, `backend/tests/test_db.py`, `backend/tests/test_api.py`, `frontend/dist/js/api.js`, `frontend/dist/js/pages/compare.js`, `frontend/dist/js/pages/overview.js`
+`backend/app/db.py`, `backend/app/api.py`, `backend/app/main.py`（路由注册：HTTP 路由层是 main.py thin adapter，服务函数 `update_photo(conn, photo_id, patch)` 在 api.py，异常映射 ValueError→422 / KeyError→404）, `backend/tests/test_db.py`, `backend/tests/test_api.py`, `backend/tests/test_main_routes.py`, `frontend/dist/js/api.js`, `frontend/dist/js/pages/compare.js`, `frontend/dist/js/pages/overview.js`
 
 其他 agent 正在并行修改不相交文件（style.css / app.js / settings.js / .github/ / README.md）——绝不触碰上述写域之外的任何文件，不执行任何 git 写操作（commit/stash/checkout/reset 一律禁止，允许 git status/diff 只读）。
