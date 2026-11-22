@@ -34,6 +34,7 @@ __all__ = [
     "dismiss_group_api",
     "undo_group_api",
     "add_feedback",
+    "update_photo",
     "get_preferences",
     "get_settings",
     "set_preference_weights",
@@ -87,6 +88,7 @@ def _group_photo_rows(conn, group_id):
     """Photos of a group with primary-file info and quality scores."""
     return conn.execute(
         "SELECT p.id AS photo_id, p.primary_file_id, f.format AS primary_format,"
+        "       p.rating, p.is_favorite,"
         "       q.sharpness, q.exposure, q.noise, q.composition, q.faces"
         " FROM photos p"
         " JOIN files f ON f.id = p.primary_file_id"
@@ -106,6 +108,8 @@ def _photo_preview(entry):
                                                               "raf", "dng",
                                                               "orf", "rw2"),
         "thumb_url": "/api/files/{}/thumbnail".format(entry["primary_file_id"]),
+        "rating": entry["rating"],
+        "is_favorite": bool(entry["is_favorite"]),
         "scores": {
             "sharpness": entry["sharpness"],
             "exposure": entry["exposure"],
@@ -282,6 +286,8 @@ def get_group(conn, group_id):
                 e["primary_file_id"]),
             "is_raw": fmt.lower() in ("cr2", "cr3", "arw", "nef", "raf",
                                       "dng", "orf", "rw2"),
+            "rating": e["rating"],
+            "is_favorite": bool(e["is_favorite"]),
         })
     return {
         "group_id": row["id"],
@@ -366,6 +372,65 @@ def add_feedback(conn, photo_id, action):
         (photo_id, action, row["group_id"]),
     )
     return {"ok": True}
+
+
+# --- photos: favorites + rating -----------------------------------------------
+
+def update_photo(conn, photo_id, patch):
+    """Update one photo's positive curation signals (favorite / rating).
+
+    ``patch`` 是字段级别的增量补丁，至少提供以下之一：
+    - ``rating``：0-5 的严格整数，或 None 表示清除回未评分；
+    - ``is_favorite``：布尔值。
+
+    校验失败（空补丁 / 类型或范围非法）抛 ValueError（HTTP 层 422），
+    照片不存在抛 KeyError（404）。字段白名单之外未知键直接忽略。
+
+    写完即 commit：HTTP 层每个请求新开连接（见 main.get_conn），
+    只有已提交的改动对后续请求可见。
+    """
+    if not isinstance(patch, dict):
+        raise ValueError("patch 必须是对象")
+    updates = {}
+    if "rating" in patch:
+        rating = patch["rating"]
+        if rating is not None:
+            # bool 是 int 的子类，先排除防止 True/False 混入评分
+            if isinstance(rating, bool) or not isinstance(rating, int):
+                raise ValueError("rating 必须是 0-5 整数或 null")
+            if not 0 <= rating <= 5:
+                raise ValueError("rating 必须在 0 到 5 之间")
+        updates["rating"] = rating
+    if "is_favorite" in patch:
+        is_favorite = patch["is_favorite"]
+        if not isinstance(is_favorite, bool):
+            raise ValueError("is_favorite 必须是布尔值")
+        updates["is_favorite"] = int(is_favorite)
+    if not updates:
+        raise ValueError("至少提供 rating 或 is_favorite 之一")
+
+    row = conn.execute(
+        "SELECT id FROM photos WHERE id = ?", (photo_id,)
+    ).fetchone()
+    if row is None:
+        raise KeyError("photo {} 不存在".format(photo_id))
+
+    # SET 子句只由上面的白名单字段构成，无注入面
+    set_clause = ", ".join("{} = ?".format(k) for k in updates)
+    conn.execute(
+        "UPDATE photos SET {} WHERE id = ?".format(set_clause),
+        list(updates.values()) + [photo_id],
+    )
+    conn.commit()
+
+    after = conn.execute(
+        "SELECT rating, is_favorite FROM photos WHERE id = ?", (photo_id,)
+    ).fetchone()
+    return {
+        "id": photo_id,
+        "rating": after["rating"],
+        "is_favorite": bool(after["is_favorite"]),
+    }
 
 
 # --- preferences ---------------------------------------------------------

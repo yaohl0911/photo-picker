@@ -7,7 +7,8 @@
 //   2. 推荐理由横幅（组级 reason，醒目位置，显示一次）
 //   3. SyncViewer 同步对比区：组内照片并排等高展示，拖一张全体同步平移、
 //      滚轮同步缩放（光标锚定 0.2x–8x）、双击复位（js/sync-viewer.js）
-//   4. 每图信息面板：文件名/格式徽章（RAW 高亮）/拍摄时间/EXIF/五维评分条/反馈
+//   4. 每图信息面板：文件名/格式徽章（RAW 高亮）/拍摄时间/收藏+用户评分/
+//      EXIF/五维评分条/反馈
 //   5. 吸底决策操作条：确认保留 N 张（learn 开关）/标记非重复/撤销上个决策
 //   6. 快捷键：1..9 选择、0 全不选、Enter 确认、D 非重复、←/→ 换组、? 帮助
 //
@@ -20,6 +21,7 @@ import {
   dismissGroup,
   undoGroup,
   sendFeedback,
+  updatePhoto,
   listGroups,
   listHistory,
   previewUrl,
@@ -495,6 +497,97 @@ export function renderCompare(container) {
     if (dislike) dislike.classList.toggle('is-active', state === 'dislike');
   }
 
+  /* ---------- 收藏 + 用户评分（正向精选信号） ---------- */
+
+  // 状态直接存于 photos 数组的对象上（服务端 get_group 返回的初始值）：
+  // buildGroup 重渲染卡片时从 p 读取，跨重渲染保持；reloadCurrent 换新
+  // 数组后回到服务端真相。photo 查找辅助防止闭包引用旧对象。
+  function findPhoto(photoId) {
+    return photos.find((q) => q.photo_id === photoId);
+  }
+
+  async function toggleFavorite(photoId) {
+    const p = findPhoto(photoId);
+    if (!p) return;
+    const next = !p.is_favorite;
+    p.is_favorite = next; // 乐观更新
+    syncSignalsUI(photoId);
+    try {
+      const res = await updatePhoto(photoId, { is_favorite: next });
+      if (disposed) return;
+      p.is_favorite = res.is_favorite; // 以服务端返回为准
+      syncSignalsUI(photoId);
+      toast(next ? `照片 ${photoId} 已收藏 ❤️` : `照片 ${photoId} 已取消收藏`, {
+        kind: 'ok',
+        duration: 2400,
+      });
+    } catch (err) {
+      if (disposed) return;
+      p.is_favorite = !next; // 失败回滚
+      syncSignalsUI(photoId);
+      toast(`收藏操作失败：${err.message}`, { kind: 'error' });
+    }
+  }
+
+  async function setRating(photoId, n) {
+    const p = findPhoto(photoId);
+    if (!p) return;
+    const prev = p.rating;
+    const next = p.rating === n ? null : n; // 再点当前星级 = 清除回未评分
+    p.rating = next; // 乐观更新
+    syncSignalsUI(photoId);
+    try {
+      const res = await updatePhoto(photoId, { rating: next });
+      if (disposed) return;
+      p.rating = res.rating; // 以服务端返回为准
+      syncSignalsUI(photoId);
+      toast(
+        next == null ? `已清除照片 ${photoId} 的评分` : `照片 ${photoId} 评为 ${next} 星`,
+        { kind: 'ok', duration: 2400 },
+      );
+    } catch (err) {
+      if (disposed) return;
+      p.rating = prev; // 失败回滚
+      syncSignalsUI(photoId);
+      toast(`评分失败：${err.message}`, { kind: 'error' });
+    }
+  }
+
+  /** upto>0 时为 hover 预览（点亮 1..upto）；upto=0 时恢复实际评分。 */
+  function paintStars(photoId, upto) {
+    const card = section.querySelector(`.photo-card[data-photo-id="${photoId}"]`);
+    if (!card) return;
+    const p = findPhoto(photoId);
+    if (!p) return;
+    const rating = upto || (p.rating == null ? 0 : p.rating);
+    card.querySelectorAll('[data-testid^="rating-star-"]').forEach((star) => {
+      const n = Number(star.dataset.star);
+      star.textContent = n <= rating ? '★' : '☆';
+      star.classList.toggle('is-active', n <= rating);
+    });
+  }
+
+  function syncSignalsUI(photoId) {
+    const card = section.querySelector(`.photo-card[data-photo-id="${photoId}"]`);
+    if (!card) return;
+    const p = findPhoto(photoId);
+    if (!p) return;
+    const fav = card.querySelector('[data-testid="favorite-toggle"]');
+    if (fav) {
+      fav.textContent = p.is_favorite ? '❤️ 已收藏' : '♡ 收藏';
+      fav.classList.toggle('is-active', !!p.is_favorite);
+      fav.setAttribute('aria-pressed', p.is_favorite ? 'true' : 'false');
+    }
+    paintStars(photoId, 0);
+    // 同步每颗星的无障碍/提示语义（点亮状态由 paintStars 负责）
+    card.querySelectorAll('[data-testid^="rating-star-"]').forEach((star) => {
+      const n = Number(star.dataset.star);
+      const isCurrent = p.rating === n;
+      star.setAttribute('aria-label', isCurrent ? `清除 ${n} 星评分` : `评为 ${n} 星`);
+      star.title = isCurrent ? `清除当前 ${n} 星评分` : `评为 ${n} 星`;
+    });
+  }
+
   /* ---------- cheatsheet ---------- */
 
   function setCheatsheet(open) {
@@ -832,6 +925,42 @@ export function renderCompare(container) {
     time.className = 'photo-card__time';
     time.textContent = `拍摄于 ${fmtDateTime(p.captured_at)}`;
     info.appendChild(time);
+
+    // ---- 收藏 + 用户评分（正向精选信号，与保留决策无关） ----
+    const signals = document.createElement('div');
+    signals.className = 'photo-card__signals';
+    const favBtn = document.createElement('button');
+    favBtn.type = 'button';
+    favBtn.className = 'btn btn--feedback';
+    favBtn.setAttribute('data-testid', 'favorite-toggle');
+    favBtn.title = '收藏照片（正向精选信号，独立于保留决策）';
+    favBtn.textContent = p.is_favorite ? '❤️ 已收藏' : '♡ 收藏';
+    if (p.is_favorite) favBtn.classList.add('is-active');
+    favBtn.setAttribute('aria-pressed', p.is_favorite ? 'true' : 'false');
+    favBtn.addEventListener('click', () => toggleFavorite(p.photo_id));
+    signals.appendChild(favBtn);
+
+    const stars = document.createElement('div');
+    stars.className = 'photo-card__stars';
+    stars.setAttribute('aria-label', '用户评分（1-5 星，再点当前星级清除）');
+    for (let n = 1; n <= 5; n++) {
+      const star = document.createElement('button');
+      star.type = 'button';
+      star.className = 'btn btn--feedback photo-card__star';
+      star.dataset.testid = `rating-star-${n}`;
+      star.dataset.star = String(n);
+      star.setAttribute('aria-label', n === p.rating ? `清除 ${n} 星评分` : `评为 ${n} 星`);
+      star.title = star.getAttribute('aria-label');
+      star.textContent = n <= (p.rating || 0) ? '★' : '☆';
+      if (n <= (p.rating || 0)) star.classList.add('is-active');
+      // hover 预览：点亮 1..n；移出恢复实际评分
+      star.addEventListener('mouseenter', () => paintStars(p.photo_id, n));
+      star.addEventListener('mouseleave', () => paintStars(p.photo_id, 0));
+      star.addEventListener('click', () => setRating(p.photo_id, n));
+      stars.appendChild(star);
+    }
+    signals.appendChild(stars);
+    info.appendChild(signals);
 
     const exif = p.exif || {};
     const cam = [exif.make, exif.model].filter(Boolean).join(' ');

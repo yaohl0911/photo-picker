@@ -74,6 +74,12 @@ export const undoGroup = (groupId) =>
 export const sendFeedback = (photoId, action) =>
   request('/api/feedback', { method: 'POST', body: { photo_id: photoId, action } });
 
+/** 更新照片的正向精选信号；patch 至少含其一：
+ *  { rating?: 0-5 整数 | null（清除）, is_favorite?: boolean }。
+ *  返回 {id, rating, is_favorite}。 */
+export const updatePhoto = (photoId, patch) =>
+  request(`/api/photos/${photoId}`, { method: 'PATCH', body: patch });
+
 /** 偏好模型完整状态（权重 / 样本数 / 锁定维度 / 解释）。 */
 export const getPreferences = () => request('/api/preferences');
 

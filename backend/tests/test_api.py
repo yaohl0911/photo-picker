@@ -739,3 +739,92 @@ def test_list_history_source_filter(scene):
 
     with pytest.raises(ValueError):
         api.list_history(conn, source="bogus")
+
+
+# ---------------------------------------------------------------------------
+# update_photo（PATCH /api/photos/{photo_id}：收藏+评分正向信号）
+# ---------------------------------------------------------------------------
+
+def test_update_photo_favorite_toggle(scene):
+    conn = scene["conn"]
+    result = api.update_photo(conn, 2, {"is_favorite": True})
+    assert result == {"id": 2, "rating": None, "is_favorite": True}
+    row = conn.execute(
+        "SELECT rating, is_favorite FROM photos WHERE id = 2").fetchone()
+    assert row["rating"] is None
+    assert row["is_favorite"] == 1
+    # 切回取消收藏
+    result = api.update_photo(conn, 2, {"is_favorite": False})
+    assert result == {"id": 2, "rating": None, "is_favorite": False}
+
+
+def test_update_photo_rating_set_then_clear(scene):
+    conn = scene["conn"]
+    result = api.update_photo(conn, 2, {"rating": 3})
+    assert result == {"id": 2, "rating": 3, "is_favorite": False}
+    row = conn.execute("SELECT rating FROM photos WHERE id = 2").fetchone()
+    assert row["rating"] == 3
+    # rating: null 清除评分回 NULL
+    result = api.update_photo(conn, 2, {"rating": None})
+    assert result == {"id": 2, "rating": None, "is_favorite": False}
+    row = conn.execute("SELECT rating FROM photos WHERE id = 2").fetchone()
+    assert row["rating"] is None
+
+
+def test_update_photo_rating_zero_is_valid(scene):
+    # 0 是合法评分（区别于 NULL=未评分）
+    result = api.update_photo(scene["conn"], 2, {"rating": 0})
+    assert result == {"id": 2, "rating": 0, "is_favorite": False}
+
+
+def test_update_photo_rating_out_of_range(scene):
+    with pytest.raises(ValueError):
+        api.update_photo(scene["conn"], 1, {"rating": 6})
+
+
+def test_update_photo_rating_type_rejected(scene):
+    # 评分必须是严格 0-5 整数："3" 字符串、True 布尔都拒绝
+    # （bool 防混入跟随 set_preference_weights 先例）
+    with pytest.raises(ValueError):
+        api.update_photo(scene["conn"], 1, {"rating": "3"})
+    with pytest.raises(ValueError):
+        api.update_photo(scene["conn"], 1, {"rating": True})
+
+
+def test_update_photo_is_favorite_type_rejected(scene):
+    with pytest.raises(ValueError):
+        api.update_photo(scene["conn"], 1, {"is_favorite": "yes"})
+
+
+def test_update_photo_missing_photo(scene):
+    with pytest.raises(KeyError):
+        api.update_photo(scene["conn"], 999, {"rating": 3})
+
+
+def test_update_photo_empty_or_no_valid_fields(scene):
+    # 空 body / 无有效字段 → ValueError（HTTP 层映射 422）
+    with pytest.raises(ValueError):
+        api.update_photo(scene["conn"], 1, {})
+    with pytest.raises(ValueError):
+        api.update_photo(scene["conn"], 1, {"foo": "bar"})
+
+
+def test_update_photo_ignores_unknown_fields(scene):
+    # 携带有效字段时未知键忽略（报错条件是「无任何有效字段」而非「有未知键」）
+    result = api.update_photo(scene["conn"], 2, {"rating": 5, "foo": 1})
+    assert result == {"id": 2, "rating": 5, "is_favorite": False}
+
+
+def test_update_photo_commit_visible_to_new_connection(scene, tmp_path):
+    # HTTP 层每请求新开连接（main.get_conn）：写路径必须在服务层 commit，
+    # 未提交的改动对后续请求不可见（先例：config.update_settings）
+    from app.db import connect
+    api.update_photo(scene["conn"], 2, {"rating": 3, "is_favorite": True})
+    conn2 = connect(str(tmp_path / "test.db"))
+    try:
+        row = conn2.execute(
+            "SELECT rating, is_favorite FROM photos WHERE id = 2").fetchone()
+        assert row["rating"] == 3
+        assert row["is_favorite"] == 1
+    finally:
+        conn2.close()

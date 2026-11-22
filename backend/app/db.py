@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS photos (
     id INTEGER PRIMARY KEY,
     primary_file_id INTEGER REFERENCES files(id),
     group_id INTEGER REFERENCES groups(id),
-    is_screenshot INTEGER   -- NULL=未分类, 1=截图(截图页处理), 0=照片
+    is_screenshot INTEGER,   -- NULL=未分类, 1=截图(截图页处理), 0=照片
+    rating INTEGER,          -- NULL=未评分, 0-5（正向精选信号）
+    is_favorite INTEGER NOT NULL DEFAULT 0   -- 0/1 收藏（正向精选信号）
 );
 
 CREATE TABLE IF NOT EXISTS quality_scores (
@@ -142,6 +144,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "decisions", "source",
                    "TEXT NOT NULL DEFAULT 'user'")
     _ensure_column(conn, "photos", "is_screenshot", "INTEGER")
+    # 收藏+评分（正向精选信号）：存量库懒迁移补列；NOT NULL 列必须带
+    # DEFAULT，SQLite 的 ALTER ADD COLUMN 才能对存量行回填默认值
+    _ensure_column(conn, "photos", "rating", "INTEGER")
+    _ensure_column(conn, "photos", "is_favorite", "INTEGER NOT NULL DEFAULT 0")
     _backfill_recommended_for_decided(conn)
     _purge_ghost_auto_decisions(conn)
     conn.execute(

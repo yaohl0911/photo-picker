@@ -167,6 +167,11 @@ def create_app(db_path: Optional[str] = None) -> FastAPI:
                  conn: sqlite3.Connection = Depends(get_conn)):
         return api.add_feedback(conn, body.photo_id, body.action)
 
+    @app.patch("/api/photos/{photo_id}")
+    def photo_patch(photo_id: int, payload: dict = Body(...),
+                    conn: sqlite3.Connection = Depends(get_conn)):
+        return api.update_photo(conn, photo_id, payload)
+
     @app.get("/api/preferences")
     def preferences(conn: sqlite3.Connection = Depends(get_conn)):
         return api.get_preferences(conn)

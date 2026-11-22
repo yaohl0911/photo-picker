@@ -195,3 +195,57 @@ def test_put_settings_rejects_unknown_key(client):
 def test_put_settings_rejects_non_bool(client):
     r = client.put("/api/settings", json={"auto_resolve_identical": "yes"})
     assert r.status_code == 422
+
+
+# --- photos: favorites + rating (PATCH) ------------------------------------------
+
+def _seed_one_photo(tmp_path, photo_id=1):
+    """直接落一行 photo，给 PATCH 一个已存在的目标。
+
+    photos.id 由调用方指定，primary_file_id 指向同库先插的 files 行
+    （FK 开启时需 files 先于 photos）。
+    """
+    from app.db import connect
+    db_path = tmp_path / "api_test.db"
+    conn = connect(str(db_path))
+    try:
+        conn.execute(
+            "INSERT INTO files (path, mtime, size, format)"
+            " VALUES (?, ?, ?, ?)",
+            (str(tmp_path / f"p{photo_id}.jpg"), 1000.0, 10, "jpg"))
+        fid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO photos (id, primary_file_id) VALUES (?, ?)",
+            (photo_id, fid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_patch_photo_favorite_and_rating_roundtrip(client, tmp_path):
+    _seed_one_photo(tmp_path)
+    r = client.patch("/api/photos/1", json={"is_favorite": True})
+    assert r.status_code == 200
+    assert r.json() == {"id": 1, "rating": None, "is_favorite": True}
+    # 两个字段独立：只改 rating，favorite 保持
+    r = client.patch("/api/photos/1", json={"rating": 4})
+    assert r.status_code == 200
+    assert r.json() == {"id": 1, "rating": 4, "is_favorite": True}
+    # null 清除评分
+    r = client.patch("/api/photos/1", json={"rating": None})
+    assert r.status_code == 200
+    assert r.json() == {"id": 1, "rating": None, "is_favorite": True}
+
+
+def test_patch_photo_validation_422(client, tmp_path):
+    _seed_one_photo(tmp_path)
+    assert client.patch(
+        "/api/photos/1", json={"rating": 6}).status_code == 422
+    assert client.patch(
+        "/api/photos/1", json={"rating": "3"}).status_code == 422
+    assert client.patch("/api/photos/1", json={}).status_code == 422
+
+
+def test_patch_photo_missing_404(client):
+    r = client.patch("/api/photos/999", json={"rating": 3})
+    assert r.status_code == 404

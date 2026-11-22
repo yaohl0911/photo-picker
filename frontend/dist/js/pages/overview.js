@@ -149,7 +149,31 @@ export function renderOverview(container) {
     img.loading = 'lazy';
     img.src = thumbUrl(photo.primary_file_id, 128);
     img.title = isRecommended ? '推荐保留' : `照片 ${photo.photo_id}`;
-    return img;
+    if (!photo.is_favorite) return img;
+    // 收藏角标 ❤️：角标叠层用内联样式实现（style.css 由并行任务独占，
+    // 后续可把这里的内联样式收编为正式类）。
+    const wrap = document.createElement('span');
+    wrap.className = 'group-card__thumb-wrap';
+    wrap.style.position = 'relative';
+    wrap.style.display = 'inline-block';
+    wrap.style.lineHeight = '0'; // 消除 inline-block 的行内空隙
+    const heart = document.createElement('span');
+    heart.className = 'group-card__fav-badge';
+    heart.dataset.testid = 'fav-badge';
+    heart.setAttribute('aria-label', '已收藏');
+    heart.title = '已收藏';
+    heart.textContent = '❤️';
+    Object.assign(heart.style, {
+      position: 'absolute',
+      top: '2px',
+      right: '2px',
+      fontSize: '14px',
+      lineHeight: '1',
+      filter: 'drop-shadow(0 0 2px rgba(0, 0, 0, 0.85))',
+      pointerEvents: 'none', // 角标不拦截缩略图点击
+    });
+    wrap.append(img, heart);
+    return wrap;
   }
 
   function groupCard(g) {

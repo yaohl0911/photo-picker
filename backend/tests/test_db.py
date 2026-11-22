@@ -235,3 +235,40 @@ def test_photos_have_is_screenshot_column(db):
     # 空表也能查询成功；列默认 NULL
     cols = {r["name"] for r in db.execute("PRAGMA table_info(photos)")}
     assert "is_screenshot" in cols
+
+
+def test_photos_have_rating_and_is_favorite_columns(db):
+    """收藏+评分正向精选信号：新库 photos 表即含两列。
+
+    rating: NULL=未评分, 0-5；is_favorite: 0/1，NOT NULL DEFAULT 0。
+    """
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(photos)")}
+    assert "rating" in cols
+    assert "is_favorite" in cols
+
+
+def test_init_db_migrates_legacy_photos_table(tmp_path):
+    """存量库懒迁移：老 photos 表缺列时 init_db 用 _ensure_column 补齐
+    （先例：is_screenshot 懒迁移），且存量行获得默认值。"""
+    conn = connect(str(tmp_path / "legacy.db"))
+    try:
+        conn.execute(
+            "CREATE TABLE photos ("
+            " id INTEGER PRIMARY KEY,"
+            " primary_file_id INTEGER,"
+            " group_id INTEGER)")
+        conn.execute("INSERT INTO photos (id) VALUES (1)")
+        conn.commit()
+
+        init_db(conn)  # 懒迁移
+
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(photos)")}
+        assert "rating" in cols
+        assert "is_favorite" in cols
+        # 存量行：rating 保持 NULL（未评分），is_favorite 回填 0
+        row = conn.execute(
+            "SELECT rating, is_favorite FROM photos WHERE id = 1").fetchone()
+        assert row["rating"] is None
+        assert row["is_favorite"] == 0
+    finally:
+        conn.close()
