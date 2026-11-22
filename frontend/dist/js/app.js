@@ -5,6 +5,10 @@
 //   - 在 container（#app）内渲染自身；
 //   - 返回的 cleanup 函数（可选）在离开页面/切换路由前被调用，
 //     用于清理轮询定时器等资源。
+//
+// 主题引导：模块体最前（import 之后）读 localStorage 的 photo-picker.theme
+// 并设置 document.documentElement.dataset.theme，先于首次 render() 执行，
+// 防止深色用户看到浅色闪烁（FOUC）。
 
 import { renderOverview } from './pages/overview.js';
 import { renderCompare } from './pages/compare.js';
@@ -12,6 +16,22 @@ import { renderPreferences } from './pages/preferences.js';
 import { renderHistory } from './pages/history.js';
 import { renderSettings } from './pages/settings.js';
 import { renderScreenshots } from './pages/screenshots.js';
+
+// --- 主题引导（防 FOUC）-----------------------------------------------
+// localStorage: 'photo-picker.theme' ∈ 'light' | 'dark' | 'auto'（默认 auto）。
+// light/dark → documentElement.dataset.theme；auto → 不设置属性，
+// 由 CSS 的 prefers-color-scheme 媒体查询跟随系统。三态互斥。
+const THEME_KEY = 'photo-picker.theme';
+try {
+  const stored = localStorage.getItem(THEME_KEY);
+  if (stored === 'light' || stored === 'dark') {
+    document.documentElement.dataset.theme = stored;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+} catch (_) {
+  /* localStorage 不可用（隐私模式等）时静默回落到跟随系统 */
+}
 
 const ROUTES = {
   overview: { label: '总览', render: renderOverview },

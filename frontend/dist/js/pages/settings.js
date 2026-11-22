@@ -10,6 +10,8 @@
 //      finished/failed 停止轮询，完成后刷新统计卡片；
 //   4. 完整流水线 —— POST /api/pipeline/run（同步、可能耗时），
 //      按钮加载态 + 完成后展示各阶段报告摘要。
+//   5. 外观 —— 三态主题选择（跟随系统/浅色/深色），切换即写
+//      localStorage 并立即生效（见 currentTheme/applyTheme）。
 //
 // localStorage（photo-picker.source_dirs）始终与列表同步：
 // 添加/删除/保存时写入，服务端加载成功时以服务端为准重写，
@@ -19,6 +21,7 @@ import { getOverview, getSettings, updateSettings, startScan, getJob, listJobs, 
 import { toast } from '../util.js';
 
 const STORAGE_KEY = 'photo-picker.source_dirs';
+const THEME_KEY = 'photo-picker.theme';
 const POLL_INTERVAL_MS = 1000;
 
 const KIND_LABELS = {
@@ -86,6 +89,37 @@ function saveDirs(dirs) {
   } catch (_) { /* 隐私模式等场景：仅本次会话有效 */ }
 }
 
+// --- 主题（三态：auto / light / dark）------------------------------------------
+// 与 app.js 的启动引导共用 photo-picker.theme 键：
+//   light/dark → documentElement.dataset.theme；
+//   auto       → 移除属性，交给 CSS prefers-color-scheme 跟随系统。
+
+/** 读取用户主题偏好；无值/非法值/存储不可用时回落 'auto'。 */
+function currentTheme() {
+  try {
+    const raw = localStorage.getItem(THEME_KEY);
+    return raw === 'light' || raw === 'dark' ? raw : 'auto';
+  } catch (_) {
+    return 'auto';
+  }
+}
+
+/** 立即应用主题到 <html>（不需要刷新页面）。 */
+function applyTheme(value) {
+  if (value === 'light' || value === 'dark') {
+    document.documentElement.dataset.theme = value;
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+}
+
+/** 持久化主题偏好（隐私模式下静默跳过，本次会话仍立即生效）。 */
+function saveTheme(value) {
+  try {
+    localStorage.setItem(THEME_KEY, value);
+  } catch (_) { /* 隐私模式等场景：仅本次会话有效 */ }
+}
+
 function fmtNumber(v) {
   return v == null ? '–' : Number(v).toLocaleString('zh-CN');
 }
@@ -117,6 +151,22 @@ export function renderSettings(container) {
       <h1 class="page__title">设置与扫描</h1>
       <p class="page__desc">管理照片源目录，扫描建立索引，并在后台完成哈希与质量分析。</p>
     </header>
+
+    <section class="card" aria-labelledby="theme-title" data-testid="theme-card">
+      <div class="card__head">
+        <h2 class="card__title" id="theme-title">外观</h2>
+        <span class="card__meta">主题模式</span>
+      </div>
+      <div class="tabs" id="theme-tabs" role="group" aria-label="主题模式" data-testid="theme-tabs">
+        <button class="tab" type="button" data-theme-choice="auto" aria-pressed="false"
+                data-testid="theme-choice-auto">跟随系统</button>
+        <button class="tab" type="button" data-theme-choice="light" aria-pressed="false"
+                data-testid="theme-choice-light">浅色</button>
+        <button class="tab" type="button" data-theme-choice="dark" aria-pressed="false"
+                data-testid="theme-choice-dark">深色</button>
+      </div>
+      <p class="hint">选择界面配色：「跟随系统」按 macOS 外观自动切换；选择浅色/深色后立即生效，下次打开应用仍会记住。</p>
+    </section>
 
     <section class="card" aria-labelledby="stats-title">
       <div class="card__head">
@@ -212,6 +262,28 @@ export function renderSettings(container) {
   const pipelineReport = $('#pipeline-report');
   const pipelineError = $('#pipeline-error');
   const offlineNotice = $('#offline-notice');
+  const themeTabs = $('#theme-tabs');
+
+  // --- 主题三态选择 ---------------------------------------------------------------
+
+  /** 按当前值同步选项卡高亮与 aria-pressed。 */
+  function syncThemeUi(value) {
+    if (!themeTabs) return;
+    for (const btn of themeTabs.querySelectorAll('[data-theme-choice]')) {
+      const active = btn.dataset.themeChoice === value;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+  }
+
+  themeTabs.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-theme-choice]');
+    if (!btn || !themeTabs.contains(btn)) return;
+    const value = btn.dataset.themeChoice;
+    saveTheme(value); // 持久化（隐私模式静默跳过）
+    applyTheme(value); // 立即生效
+    syncThemeUi(value);
+  });
 
   // --- 统计 -------------------------------------------------------------------
 
@@ -889,6 +961,7 @@ export function renderSettings(container) {
   loadStats();
   loadServerSettings(); // 与统计加载并行：服务端优先，失败降级 localStorage
   resumeActiveJob(); // 恢复后台仍在跑的作业进度（切页返回场景）
+  syncThemeUi(currentTheme()); // 主题选项卡与当前偏好对齐
 
   // 离开页面前清掉轮询/计时定时器和挂在 body 上的目录浏览对话框
   return function cleanup() {
