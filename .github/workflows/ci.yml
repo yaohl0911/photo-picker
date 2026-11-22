@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # opencv-python 4.10 为非 headless 版，无头 Linux 缺 libGL，
+      # 保守方案：不动 requirements，直接补装系统库
+      - name: Install libGL for opencv-python
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1
+
+      - name: Run backend tests
+        run: python -m pytest backend/tests -q

@@ -1,5 +1,7 @@
 # 照片精选助手
 
+[![CI](https://github.com/yaohl0911/photo-picker/actions/workflows/ci.yml/badge.svg)](https://github.com/yaohl0911/photo-picker/actions/workflows/ci.yml)
+
 本地优先的照片精选与偏好学习工具：扫描相册目录，用感知哈希找出相似照片组、识别积攒的截图，基于质量分析给出「保留哪张」的推荐和理由，你在并排对比中做决策，每一次决策都会反哺偏好权重，越用越懂你。
 
 ## 功能特性
